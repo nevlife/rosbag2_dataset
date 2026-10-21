@@ -39,6 +39,9 @@ Exported arrays and raw views remain valid after closing a bag or evicting a chu
 release those views to release their storage. Strings, scalar values, nested
 objects, and the in-memory index require allocations. No files are written beside
 bags. A directory includes all its `*.mcap` files without requiring PyYAML.
+A compressed chunk is decompressed whole even when only one of its topics is read;
+record with the MCAP storage option `chunkByTopic: true` so that each chunk holds
+one topic.
 
 `image_to_numpy()` returns HxW or HxWxC views for rgb8, bgr8, rgba8, bgra8, mono8,
 mono16, 16UC1, and 32FC1. `pointcloud2_to_numpy()` returns an HxW structured view
