@@ -62,8 +62,8 @@ def write(tmp_path, data):
     return path
 
 
-def chunk_index(index_offset):
-    entries = struct.pack('<HQ', 1, index_offset)
+def chunk_index(index_offset, count=1):
+    entries = struct.pack('<HQ', 1, index_offset) * count
     return record(8, struct.pack('<QQQQI', 0, 0, 8, 0, len(entries)) + entries
                   + struct.pack('<Q', 0) + string('') + struct.pack('<QQ', 0, 0))
 
@@ -77,6 +77,13 @@ def chunk_index(index_offset):
 def test_offsets_beyond_file(tmp_path, data):
     with pytest.raises(ValueError, match='Corrupt MCAP'):
         dataset.open(write(tmp_path, data))
+
+
+def test_repeated_message_index(tmp_path):
+    index = record(7, struct.pack('<HI', 1, 400 * 16) + struct.pack('<QQ', 10, 0) * 400)
+    summary = schema() + channel() + chunk_index(8, 200)
+    with pytest.raises(ValueError, match='Corrupt MCAP'):
+        dataset.open(write(tmp_path, index + summary + footer(8 + len(index))))
 
 
 def test_raw_offset_beyond_file(tmp_path):

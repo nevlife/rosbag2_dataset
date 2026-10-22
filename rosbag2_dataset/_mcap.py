@@ -131,6 +131,8 @@ class McapFile:
         if footer >= 8 and buffer[-8:] == MAGIC and buffer[footer] == 2:
             summary_start, summary_offsets = struct.unpack_from('<QQ', buffer, footer + 9)
         indexed_chunks = set()
+        # Message index entries occupy disjoint 16-byte ranges of the file.
+        pairs_left = len(buffer) // 16
         if summary_start:
             end = summary_offsets or footer
             for opcode, _, pos, _ in records(buffer, summary_start, end):
@@ -147,6 +149,9 @@ class McapFile:
                         size = _U32.unpack_from(buffer, index_offset + 11)[0]
                         pairs = np.frombuffer(buffer, _INDEX_ENTRY, size // 16,
                                               index_offset + 15)
+                        pairs_left -= len(pairs)
+                        if pairs_left < 0:
+                            raise ValueError(f'Corrupt MCAP file: {self.path} reuses index bytes')
                         self.entries.extend((channel, int(pair['time']), chunk,
                                              int(pair['offset'])) for pair in pairs)
         self.used_summary = bool(indexed_chunks)
