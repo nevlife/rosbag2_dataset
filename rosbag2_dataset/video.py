@@ -68,13 +68,14 @@ def _av1_key(data):
         if not header & 2:
             return False
         size = shift = 0
-        while True:
-            byte = data[position]
+        for byte in data[position:position + 8]:
             position += 1
             size |= (byte & 0x7f) << shift
             shift += 7
             if not byte & 0x80:
                 break
+        else:
+            return False
         position += size
     return False
 
