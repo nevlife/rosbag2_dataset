@@ -191,6 +191,12 @@ def compile_decoder(name, text):
         if len(payload) < 4 or bytes(payload[:2]) not in (b'\x00\x00', b'\x00\x01'):
             raise ValueError('Expected XCDR1 plain CDR encapsulation (CDR_BE or CDR_LE)')
         buffer = memoryview(payload).toreadonly()[4:]
-        return decoders['<' if payload[1] == 1 else '>'](buffer, 0)[0]
+        try:
+            message, end = decoders['<' if payload[1] == 1 else '>'](buffer, 0)
+        except struct.error as error:
+            raise ValueError('Truncated CDR payload') from error
+        if end > len(buffer):
+            raise ValueError('Truncated CDR payload')
+        return message
 
     return decode

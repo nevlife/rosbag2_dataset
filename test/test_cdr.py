@@ -147,6 +147,16 @@ def test_reject_unsupported_serialization():
         compile_decoder('demo/One', 'uint8[broken] value')
 
 
+@pytest.mark.parametrize('schema, data', [
+    ('uint64 value', b'\x01\x02'),
+    ('string text', b'\x0a\x00\x00\x00ab'),
+    ('byte flag\nstring text', b'\x01'),
+], ids=['scalar', 'string', 'length'])
+def test_truncated_payload(schema, data):
+    with pytest.raises(ValueError, match='Truncated CDR'):
+        compile_decoder('demo/Short', schema)(b'\x00\x01\x00\x00' + data)
+
+
 @pytest.mark.parametrize('typename', ['WStrings', 'Empty'])
 def test_ros_wstrings_and_empty(ros, typename):
     from pathlib import Path
