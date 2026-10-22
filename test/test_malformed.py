@@ -95,12 +95,22 @@ def test_corrupt_compressed_chunk(tmp_path, compression):
         dataset.open(write(tmp_path, record(6, body + data)))
 
 
+def test_message_on_unknown_channel(tmp_path):
+    with pytest.raises(ValueError, match='unknown channel 1'):
+        dataset.open(write(tmp_path, message()))
+
+
 def test_schemaless_channel(tmp_path):
     with dataset.open(write(tmp_path, channel(schema_id=0) + message())) as bag:
         assert bag.topics['/one'].type == ''
         assert bytes(bag.topic('/one').raw(0)[1]) == b'\x00\x01\x00\x00\x07'
         with pytest.raises(ValueError, match='ros2msg schema'):
             bag.topic('/one')[0]
+
+
+def test_time_beyond_int64(tmp_path):
+    with pytest.raises(ValueError, match='int64'):
+        dataset.open(write(tmp_path, schema() + channel() + message(time=1 << 63)))
 
 
 @pytest.mark.parametrize('data', [b'\x12', b'\x12\x80', b'\x16'],

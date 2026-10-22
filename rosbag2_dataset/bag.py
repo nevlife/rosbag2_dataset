@@ -51,7 +51,10 @@ class Topic:
         self.name = name
         self.type = typename
         entries.sort(key=lambda row: row[0])
-        self._entries = np.asarray(entries, dtype=np.int64).reshape(-1, 5)
+        try:
+            self._entries = np.asarray(entries, dtype=np.int64).reshape(-1, 5)
+        except OverflowError as error:
+            raise ValueError(f'{name}: MCAP time or offset exceeds int64') from error
         self._entries.flags.writeable = False
         self.times = self._entries[:, 0]
         self._decoders = {}
@@ -173,6 +176,8 @@ class Bag:
                     types[channel.topic] = typename
                     entries.setdefault(channel.topic, [])
                 for channel_id, time, chunk, offset in file.entries:
+                    if channel_id not in file.channels:
+                        raise ValueError(f'{file.path}: message on unknown channel {channel_id}')
                     channel = file.channels[channel_id]
                     entries[channel.topic].append((time, file_id, channel_id, chunk, offset))
                 file.entries.clear()
