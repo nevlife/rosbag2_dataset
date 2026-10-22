@@ -74,8 +74,8 @@ class Topic:
         key = (int(file_id), int(channel))
         if key not in self._decoders:
             info = file.channels[channel]
-            schema = file.schemas[info.schema_id]
-            if info.encoding != 'cdr' or schema.encoding != 'ros2msg':
+            schema = file.schemas.get(info.schema_id)
+            if info.encoding != 'cdr' or schema is None or schema.encoding != 'ros2msg':
                 raise ValueError('Decoding requires cdr messages with a ros2msg schema')
             self._decoders[key] = compile_decoder(schema.name, schema.text)
         payload = file.raw(int(chunk), int(offset))
