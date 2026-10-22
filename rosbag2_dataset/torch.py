@@ -22,6 +22,7 @@
 
 from bisect import bisect_right
 from collections import OrderedDict
+from collections.abc import Mapping
 import json
 import operator
 import os
@@ -136,11 +137,15 @@ class SceneDataset:
     Each loaded sensor replaces its column with a NumPy array, or None where the
     frame has no message. A table sensor gives its rows with timestamps in
     (previous frame, this frame] as column arrays. T_world_base becomes 4x4.
+
+    ref sensors read the bag directory recorded in scene.json. bag_root moves it:
+    a mapping from recorded to new directories, or a directory that holds the
+    bags under their recorded directory names.
     """
 
     table_cache_size = 8
 
-    def __init__(self, roots, sensors=None, transform=None):
+    def __init__(self, roots, sensors=None, transform=None, bag_root=None):
         import pyarrow.parquet as pq
         roots = [roots] if isinstance(roots, (str, Path)) else roots
         paths = []
@@ -157,6 +162,7 @@ class SceneDataset:
         for path in paths:
             scene = json.loads((path / 'scene.json').read_text())
             scene['path'] = path
+            scene['bag_dir'] = _bag_dir(scene['source']['dir'], bag_root)
             for name, sensor in scene['sensors'].items():
                 sensor['name'] = name
             self.scenes.append(scene)
@@ -239,3 +245,12 @@ class SceneDataset:
 
     def __exit__(self, *args):
         self.close()
+
+
+def _bag_dir(recorded, bag_root):
+    if bag_root is None:
+        return Path(recorded)
+    if isinstance(bag_root, Mapping):
+        moved = {str(Path(old)): new for old, new in bag_root.items()}
+        return Path(moved.get(recorded, recorded))
+    return Path(bag_root) / Path(recorded).name

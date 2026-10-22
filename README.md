@@ -79,7 +79,7 @@ It needs `pip install .[export]` (pyarrow, PyYAML, Pillow); `store: mp4` also ne
 `.[video]` (PyAV). Reading bags stays NumPy-only.
 
 ```bash
-python -m rosbag2_dataset.export spec.yaml /data/run out [--start-ns T] [--end-ns T]
+python -m rosbag2_dataset.export spec.yaml /data/run out [--start-ns T] [--end-ns T] [--clean]
 ```
 
 ```yaml
@@ -123,7 +123,7 @@ None) and returns a dictionary of extra `frames.parquet` columns. Files it write
 under `scene_dir` move with the scene.
 
 ```text
-out/<bag name>/<scene>/
+out/<bag name>/<bag name>_<first frame time, 19 digits>/
   scene.json        format version, spec copy, reference, time source, rate, source bag
                     files and range, tf frames, sensors: topic, type, store, frame_id,
                     camera intrinsics (K, D, R, P), T_base_sensor, video, schema, stats
@@ -146,13 +146,23 @@ frame; the first scene starts at its first frame.
 `ref` records the MCAP file relative to the bag directory, the chunk offset
 (-1 when unchunked), and the record offset inside it, plus the topic schema in
 `scene.json`. The reader maps the file and decodes the message without the bag
-index, so the bag must stay where it was exported from. Compressed chunks are
-decompressed whole; record with `chunkByTopic: true`.
+index. It reads the bag directory recorded in `source.dir` (the directory of a
+single exported `.mcap` file); `SceneDataset(..., bag_root=...)` reads a moved bag,
+given a directory holding bags under their recorded directory names or a mapping
+from recorded to new directories. Compressed chunks are decompressed whole; record
+with `chunkByTopic: true`.
 
-Each scene is written to `.<scene>.partial` and renamed into place, replacing
-an existing scene of the same name. An interrupted export leaves complete scenes
-and a hidden partial folder that the next run removes. Messages are read one
-frame at a time.
+A scene is named after the bag and the time of its first frame (`time` clock,
+nanoseconds zero-padded to 19 digits), so names sort by time, a rerun with the same
+spec and range rewrites the same scenes, and a run over another time range adds
+scenes beside the existing ones. Each scene is written to `.<scene>.partial` and
+renamed into place, replacing an existing scene of the same name. Scenes of an
+earlier run that this run does not rewrite stay, including scenes that overlap
+after `scene_frames` or the range changed; `--clean` (`export(..., clean=True)`)
+removes them and leftover partial folders after the export finishes. An
+interrupted export leaves complete scenes and a hidden partial folder that a
+rerun of the same scene, or `--clean`, removes. Messages are read one frame at a
+time.
 
 ```python
 from rosbag2_dataset.torch import SceneDataset

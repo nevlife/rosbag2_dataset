@@ -144,6 +144,10 @@ def frames(scene):
     return pq.read_table(scene / 'frames.parquet').to_pydict()
 
 
+def names(bag, *frames):
+    return [f'{bag.name}_{START + k * LIDAR_NS:019d}' for k in frames]
+
+
 def test_spec(tmp_path):
     path = tmp_path / 'spec.yaml'
     path.write_text('reference: /lidar\nscene_frames: 3\ntime: log\n'
@@ -186,7 +190,7 @@ def test_sync_offsets_and_files(scene_bag, tmp_path):
     scenes = export(spec(cam={**CAM, 'store': 'png'},
                          slow={'topic': '/slow/image_raw', 'max_ms': 150, 'store': 'npy'}),
                     scene_bag, tmp_path / 'out')
-    assert [p.name for p in scenes] == ['0000', '0001', '0002']
+    assert [p.name for p in scenes] == names(scene_bag, 0, 4, 8)
     assert scenes[0].parent == tmp_path / 'out' / scene_bag.name
     rows = {key: sum((frames(p)[key] for p in scenes), []) for key in frames(scenes[0])}
     assert rows['timestamp_ns'] == [START + k * LIDAR_NS for k in range(FRAMES)]
@@ -255,14 +259,15 @@ def test_atomic_rewrite(scene_bag, tmp_path):
     finally:
         FAIL_AT[0] = None
     root = tmp_path / 'out' / scene_bag.name
-    assert sorted(p.name for p in root.iterdir()) == ['.0001.partial', '0000']
-    first = frames(root / '0000')
-    assert first['lidar_y'] == [float(k * LIDAR_NS) for k in range(4)]
+    first, second, third = names(scene_bag, 0, 4, 8)
+    assert sorted(p.name for p in root.iterdir()) == [f'.{second}.partial', first]
+    first_frames = frames(root / first)
+    assert first_frames['lidar_y'] == [float(k * LIDAR_NS) for k in range(4)]
     scenes = export(options, scene_bag, tmp_path / 'out')
-    assert sorted(p.name for p in root.iterdir()) == ['0000', '0001', '0002']
-    assert frames(scenes[0]) == first
+    assert sorted(p.name for p in root.iterdir()) == [first, second, third]
+    assert frames(scenes[0]) == first_frames
     again = export(options, scene_bag, tmp_path / 'out')
-    assert sorted(p.name for p in root.iterdir()) == ['0000', '0001', '0002']
+    assert sorted(p.name for p in root.iterdir()) == [first, second, third]
     assert [frames(p) for p in again] == [frames(p) for p in scenes]
     with pytest.raises(ValueError, match='no messages'):
         export(spec(cam={'topic': '/missing', 'store': 'npy'}),
@@ -301,6 +306,14 @@ def test_ref_round_trip(write_bag, scene_bag, tmp_path, options):
                 else:
                     np.testing.assert_array_equal(a[name], b[name])
         np.testing.assert_array_equal(actual[4]['cam'], pixels(8))
+    moved = tmp_path / 'moved'
+    moved.mkdir()
+    scene_bag.rename(moved / scene_bag.name)
+    with pytest.raises(FileNotFoundError):
+        SceneDataset(tmp_path / 'refs')[0]
+    for bag_root in (moved, {str(scene_bag): moved / scene_bag.name}):
+        with SceneDataset(tmp_path / 'refs', bag_root=bag_root) as actual:
+            np.testing.assert_array_equal(actual[4]['cam'], pixels(8))
 
 
 def _events(path):
@@ -339,7 +352,7 @@ def test_scene_dataset(scene_bag, tmp_path):
     samples = SceneDataset(tmp_path / 'out')
     assert len(samples) == FRAMES and len(samples.scenes) == 3
     sample = samples[5]
-    assert sample['frame'] == 1 and sample['scene'].endswith('0001')
+    assert sample['frame'] == 1 and sample['scene'].endswith(names(scene_bag, 4)[0])
     assert sample['timestamp_ns'] == START + 5 * LIDAR_NS
     assert sample['T_world_base'].shape == (4, 4)
     assert sample['T_world_base'][0, 3] == pytest.approx(0.5)
@@ -353,7 +366,8 @@ def test_scene_dataset(scene_bag, tmp_path):
     restored = pickle.loads(pickle.dumps(samples))
     assert restored._files is None
     np.testing.assert_array_equal(restored[4]['cam'], pixels(8))
-    only = SceneDataset([tmp_path / 'out' / scene_bag.name / '0000'], sensors=['cam'],
+    only = SceneDataset([tmp_path / 'out' / scene_bag.name / names(scene_bag, 0)[0]],
+                        sensors=['cam'],
                         transform=lambda sample: sample['cam'].shape)
     assert len(only) == 4 and only[0] == (48, 64, 3)
     for dataset in (samples, restored, only):
@@ -365,6 +379,23 @@ def test_cli(scene_bag, tmp_path, capsys):
     path.write_text(json.dumps(spec(cam={**CAM, 'store': 'jpeg'})))
     main([str(path), str(scene_bag), str(tmp_path / 'out'),
           '--start-ns', str(START + 6 * LIDAR_NS)])
+    root = tmp_path / 'out' / scene_bag.name
     printed = capsys.readouterr().out.split()
-    assert printed == [str(tmp_path / 'out' / scene_bag.name / '0000')]
-    assert len(frames(tmp_path / 'out' / scene_bag.name / '0000')['timestamp_ns']) == 4
+    assert printed == [str(root / name) for name in names(scene_bag, 6)]
+    assert len(frames(root / names(scene_bag, 6)[0])['timestamp_ns']) == 4
+    path.write_text(json.dumps({**spec(), 'scene_frames': 5}))
+    main([str(path), str(scene_bag), str(tmp_path / 'out'), '--clean'])
+    assert sorted(p.name for p in root.iterdir()) == names(scene_bag, 0, 5)
+
+
+def test_scene_names(scene_bag, tmp_path):
+    full = export(spec(), scene_bag, tmp_path / 'out')
+    part = export(spec(), scene_bag, tmp_path / 'out', start_ns=START + 2 * LIDAR_NS,
+                  end_ns=START + 5 * LIDAR_NS)
+    assert [p.name for p in part] == names(scene_bag, 2)
+    root = tmp_path / 'out' / scene_bag.name
+    assert sorted(p.name for p in root.iterdir()) == names(scene_bag, 0, 2, 4, 8)
+    assert [frames(p) for p in export(spec(), scene_bag, tmp_path / 'out')] == [
+        frames(p) for p in full]
+    export(spec(), scene_bag, tmp_path / 'out', end_ns=START + 4 * LIDAR_NS, clean=True)
+    assert sorted(p.name for p in root.iterdir()) == names(scene_bag, 0)

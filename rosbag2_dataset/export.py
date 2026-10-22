@@ -21,7 +21,7 @@
 """
 Export synchronized rosbag2 MCAP frames into self-describing scene folders.
 
-python -m rosbag2_dataset.export spec.yaml bag out [--start-ns T] [--end-ns T]
+python -m rosbag2_dataset.export spec.yaml bag out [--start-ns T] [--end-ns T] [--clean]
 """
 
 import argparse
@@ -339,6 +339,7 @@ class Exporter:
         self.reader = reader
         self.bag_path = Path(bag_path).resolve()
         self.source_dir = self.bag_path if self.bag_path.is_dir() else self.bag_path.parent
+        self.bag_name = self.bag_path.name if self.bag_path.is_dir() else self.bag_path.stem
         spec = self.spec
         for sensor in spec.sensors:
             if sensor.topic not in reader.topics or not reader.topics[sensor.topic].count:
@@ -412,9 +413,9 @@ class Exporter:
             start = int(times[parts[k - 1][-1]]) + 1 if k else int(times[part[0]])
             yield part, start, int(times[part[-1]]) + 1
 
-    def write(self, root, number, rows, start, stop):
-        """Write one scene through a temporary folder and return its path."""
-        name = f'{number:04d}'
+    def write(self, root, rows, start, stop):
+        """Write one scene, named by bag and first frame time, through a temporary folder."""
+        name = f'{self.bag_name}_{int(self.sync.times[rows[0], 0]):019d}'
         final = Path(root) / name
         partial = Path(root) / f'.{name}.partial'
         if partial.exists():
@@ -598,18 +599,29 @@ class Exporter:
         return meta
 
 
-def export(spec, bag, out, *, start_ns=None, end_ns=None):
-    """Write each scene of a bag under out/<bag name>/ and return the scene paths."""
-    return list(_export(spec, bag, out, start_ns, end_ns))
+def export(spec, bag, out, *, start_ns=None, end_ns=None, clean=False):
+    """
+    Write each scene of a bag under out/<bag name>/ and return the scene paths.
+
+    clean removes the bag's other scenes and partial folders after the export.
+    """
+    return list(_export(spec, bag, out, start_ns, end_ns, clean))
 
 
-def _export(spec, bag, out, start_ns, end_ns):
-    bag = Path(bag).resolve()
-    root = Path(out) / (bag.stem if bag.is_file() else bag.name)
+def _export(spec, bag, out, start_ns, end_ns, clean):
     with Bag(bag) as reader:
         exporter = Exporter(spec, reader, bag)
-        for number, (rows, start, stop) in enumerate(exporter.scenes(start_ns, end_ns)):
-            yield exporter.write(root, number, rows, start, stop)
+        root = Path(out) / exporter.bag_name
+        written = set()
+        for rows, start, stop in exporter.scenes(start_ns, end_ns):
+            path = exporter.write(root, rows, start, stop)
+            written.add(path.name)
+            yield path
+    if clean and root.exists():
+        for path in root.iterdir():
+            if path.name not in written and ((path / 'scene.json').exists()
+                                             or path.name.endswith(('.partial', '.previous'))):
+                shutil.rmtree(path)
 
 
 def main(argv=None):
@@ -620,8 +632,10 @@ def main(argv=None):
     parser.add_argument('out', help='output directory; scenes go to out/<bag name>/')
     parser.add_argument('--start-ns', type=int, help='first reference time to export')
     parser.add_argument('--end-ns', type=int, help='reference time to stop before')
+    parser.add_argument('--clean', action='store_true',
+                        help="remove the bag's scenes that this run did not write")
     args = parser.parse_args(argv)
-    for path in _export(args.spec, args.bag, args.out, args.start_ns, args.end_ns):
+    for path in _export(args.spec, args.bag, args.out, args.start_ns, args.end_ns, args.clean):
         print(path, flush=True)
 
 

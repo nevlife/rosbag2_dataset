@@ -22,7 +22,6 @@
 
 from fractions import Fraction
 import io
-from pathlib import Path
 
 import numpy as np
 
@@ -88,7 +87,7 @@ class SceneFiles:
         store = sensor['store']
         name = sensor['name']
         if store == 'ref':
-            path = Path(scene['source']['dir']) / row[name + '_file']
+            path = scene['bag_dir'] / row[name + '_file']
             if path not in self._mcaps:
                 self._mcaps[path] = McapFile(path, index=False)
             payload = self._mcaps[path].raw(row[name + '_chunk'], row[name + '_record'])
