@@ -18,8 +18,13 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 # THE SOFTWARE.
 
-"""Export synchronized rosbag2 MCAP frames into self-describing scene folders."""
+"""
+Export synchronized rosbag2 MCAP frames into self-describing scene folders.
 
+python -m rosbag2_dataset.export spec.yaml bag out [--start-ns T] [--end-ns T]
+"""
+
+import argparse
 from dataclasses import dataclass, replace
 import importlib
 import json
@@ -522,3 +527,20 @@ def _export(spec, bag, out, start_ns, end_ns):
         exporter = Exporter(spec, reader, bag)
         for number, (rows, start, stop) in enumerate(exporter.scenes(start_ns, end_ns)):
             yield exporter.write(root, number, rows, start, stop)
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(prog='python -m rosbag2_dataset.export',
+                                     description='Export a rosbag2 MCAP bag into scenes.')
+    parser.add_argument('spec', help='export spec YAML')
+    parser.add_argument('bag', help='bag directory or .mcap file')
+    parser.add_argument('out', help='output directory; scenes go to out/<bag name>/')
+    parser.add_argument('--start-ns', type=int, help='first reference time to export')
+    parser.add_argument('--end-ns', type=int, help='reference time to stop before')
+    args = parser.parse_args(argv)
+    for path in _export(args.spec, args.bag, args.out, args.start_ns, args.end_ns):
+        print(path, flush=True)
+
+
+if __name__ == '__main__':
+    main()

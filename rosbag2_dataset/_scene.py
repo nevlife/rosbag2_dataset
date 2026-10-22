@@ -18,7 +18,7 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 # THE SOFTWARE.
 
-"""Convert sensor messages to arrays."""
+"""Convert sensor messages to arrays and read stored scene samples."""
 
 import io
 
@@ -30,6 +30,7 @@ from .numpy import image_to_numpy, pointcloud2_to_numpy
 IMAGE = 'sensor_msgs/msg/Image'
 COMPRESSED_IMAGE = 'sensor_msgs/msg/CompressedImage'
 POINT_CLOUD = 'sensor_msgs/msg/PointCloud2'
+SIXTEEN_BIT = ('mono16', '16UC1')
 
 
 def image_pixels(message):
@@ -58,3 +59,20 @@ def cloud_points(message, fields, finite):
     if finite:
         points = points[np.isfinite(points).all(axis=1)]
     return points
+
+
+class SceneFiles:
+    """Read stored sensor values."""
+
+    def read(self, scene, sensor, row):
+        """Return the array of one sensor in a frames.parquet row."""
+        path = scene['path'] / row[sensor['name']]
+        if sensor['store'] == 'npy':
+            return np.load(path)
+        from PIL import Image
+        with Image.open(path) as image:
+            pixels = np.asarray(image)
+        return pixels.astype(np.uint16) if sensor.get('encoding') in SIXTEEN_BIT else pixels
+
+    def close(self):
+        """Release open files; file stores keep none."""

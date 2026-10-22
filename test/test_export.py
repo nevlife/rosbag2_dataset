@@ -22,6 +22,7 @@
 
 import json
 import math
+import pickle
 
 import numpy as np
 import pytest
@@ -30,7 +31,8 @@ pa = pytest.importorskip('pyarrow')
 pq = pytest.importorskip('pyarrow.parquet')
 pytest.importorskip('PIL')
 
-from rosbag2_dataset.export import export, load_spec  # noqa: E402
+from rosbag2_dataset.export import export, load_spec, main  # noqa: E402
+from rosbag2_dataset.torch import SceneDataset  # noqa: E402
 
 START = 1_000_000_000
 LIDAR_NS = 100_000_000
@@ -268,3 +270,40 @@ def test_atomic_rewrite(scene_bag, tmp_path):
     with pytest.raises(ValueError, match='does not accept'):
         export({**spec(), 'sensors': {'lidar': {'topic': '/lidar', 'store': 'png'}}},
                scene_bag, tmp_path / 'out')
+
+
+def test_scene_dataset(scene_bag, tmp_path):
+    export(spec(cam={**CAM, 'store': 'png'}, imu={'topic': '/imu', 'store': 'table'}),
+           scene_bag, tmp_path / 'out')
+    samples = SceneDataset(tmp_path / 'out')
+    assert len(samples) == FRAMES and len(samples.scenes) == 3
+    sample = samples[5]
+    assert sample['frame'] == 1 and sample['scene'].endswith('0001')
+    assert sample['timestamp_ns'] == START + 5 * LIDAR_NS
+    assert sample['T_world_base'].shape == (4, 4)
+    assert sample['T_world_base'][0, 3] == pytest.approx(0.5)
+    np.testing.assert_array_equal(sample['imu']['timestamp_ns'],
+                                  START + np.arange(41, 51) * 10_000_000)
+    np.testing.assert_array_equal(sample['imu']['angular_velocity.z'], np.arange(41, 51))
+    assert len(samples[0]['imu']['timestamp_ns']) == 1
+    assert samples[-1]['timestamp_ns'] == START + 9 * LIDAR_NS
+    with pytest.raises(IndexError):
+        samples[FRAMES]
+    restored = pickle.loads(pickle.dumps(samples))
+    assert restored._files is None
+    np.testing.assert_array_equal(restored[4]['cam'], pixels(8))
+    only = SceneDataset([tmp_path / 'out' / scene_bag.name / '0000'], sensors=['cam'],
+                        transform=lambda sample: sample['cam'].shape)
+    assert len(only) == 4 and only[0] == (48, 64, 3)
+    for dataset in (samples, restored, only):
+        dataset.close()
+
+
+def test_cli(scene_bag, tmp_path, capsys):
+    path = tmp_path / 'spec.yaml'
+    path.write_text(json.dumps(spec(cam={**CAM, 'store': 'jpeg'})))
+    main([str(path), str(scene_bag), str(tmp_path / 'out'),
+          '--start-ns', str(START + 6 * LIDAR_NS)])
+    printed = capsys.readouterr().out.split()
+    assert printed == [str(tmp_path / 'out' / scene_bag.name / '0000')]
+    assert len(frames(tmp_path / 'out' / scene_bag.name / '0000')['timestamp_ns']) == 4
