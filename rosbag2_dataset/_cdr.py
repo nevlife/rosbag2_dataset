@@ -177,6 +177,9 @@ def compile_decoder(name, text):
                     emit(f'{target}.flags.writeable = False')
                     emit(f'p += n * {size}')
                 else:
+                    # Each element takes at least one byte, so n cannot exceed the rest.
+                    emit('if n > len(b) - p:')
+                    emit('raise ValueError("Truncated CDR payload")', 2)
                     emit(f'{target} = []')
                     emit('for _ in range(n):')
                     scalar(base, 'value', 2)

@@ -157,6 +157,15 @@ def test_truncated_payload(schema, data):
         compile_decoder('demo/Short', schema)(b'\x00\x01\x00\x00' + data)
 
 
+@pytest.mark.parametrize('schema', ['Flag[] flags', 'Flag[4294967295] flags'],
+                         ids=['sequence', 'array'])
+def test_sequence_length_beyond_payload(schema):
+    text = schema + '\n' + '=' * 80 + '\nMSG: demo/Flag\nbyte flag\n'
+    decoder = compile_decoder('demo/Flags', text)
+    with pytest.raises(ValueError, match='Truncated CDR'):
+        decoder(b'\x00\x01\x00\x00\xff\xff\xff\xff\x01')
+
+
 @pytest.mark.parametrize('typename', ['WStrings', 'Empty'])
 def test_ros_wstrings_and_empty(ros, typename):
     from pathlib import Path
