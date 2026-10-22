@@ -172,6 +172,16 @@ def test_non_ascii_field_name(field):
         compile_decoder('demo/Name', 'uint8 ' + field)
 
 
+def test_recursive_definition():
+    with pytest.raises(ValueError, match='nests too deeply'):
+        compile_decoder('demo/Node', 'Node child')(b'\x00\x01\x00\x00')
+
+
+def test_array_size_beyond_index():
+    with pytest.raises(ValueError, match='Truncated CDR'):
+        compile_decoder('demo/Huge', f'uint8[{1 << 64}] values')(b'\x00\x01\x00\x00')
+
+
 @pytest.mark.parametrize('typename', ['WStrings', 'Empty'])
 def test_ros_wstrings_and_empty(ros, typename):
     from pathlib import Path

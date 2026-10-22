@@ -196,8 +196,10 @@ def compile_decoder(name, text):
         buffer = memoryview(payload).toreadonly()[4:]
         try:
             message, end = decoders['<' if payload[1] == 1 else '>'](buffer, 0)
-        except struct.error as error:
+        except (struct.error, OverflowError) as error:
             raise ValueError('Truncated CDR payload') from error
+        except RecursionError as error:
+            raise ValueError(f'CDR message {name} nests too deeply') from error
         if end > len(buffer):
             raise ValueError('Truncated CDR payload')
         return message
