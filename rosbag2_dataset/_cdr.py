@@ -36,7 +36,7 @@ _PRIMITIVES = {
     'int64': ('q', 'i8'), 'uint64': ('Q', 'u8'),
     'float32': ('f', 'f4'), 'float64': ('d', 'f8'),
 }
-_FIELD = re.compile(r'^(\S+)\s+([a-zA-Z_]\w*)(.*)$')
+_FIELD = re.compile(r'^(\S+)\s+([a-zA-Z_]\w*)((?:[\s=].*)?)$', re.ASCII)
 _TYPE = re.compile(r'^(\w+(?:/\w+)*)(?:<=\d+)?(?:\[(\d*|<=\d+)\])?$')
 
 

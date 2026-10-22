@@ -166,6 +166,12 @@ def test_sequence_length_beyond_payload(schema):
         decoder(b'\x00\x01\x00\x00\xff\xff\xff\xff\x01')
 
 
+@pytest.mark.parametrize('field', ['a\u00b2', 'a\ufb01'], ids=['superscript', 'ligature'])
+def test_non_ascii_field_name(field):
+    with pytest.raises(ValueError, match='Invalid ros2msg'):
+        compile_decoder('demo/Name', 'uint8 ' + field)
+
+
 @pytest.mark.parametrize('typename', ['WStrings', 'Empty'])
 def test_ros_wstrings_and_empty(ros, typename):
     from pathlib import Path
