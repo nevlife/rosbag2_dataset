@@ -30,6 +30,7 @@ import numpy as np
 
 from ._cdr import compile_decoder
 from ._mcap import McapFile
+from .video import VideoTopic
 
 
 @dataclass(frozen=True)
@@ -97,14 +98,17 @@ class Topic:
         return schema.name, schema.encoding, schema.text
 
     def stamps(self, time_source='log'):
-        """Return int64 log times or header stamps, in log-time order."""
+        """Return int64 log times or header (Foxglove: timestamp) stamps by log time."""
         if time_source == 'log':
             return self.times
         if time_source != 'header':
             raise ValueError("time_source must be 'log' or 'header'")
-        return np.array([message.header.stamp.sec * 1_000_000_000 +
-                         message.header.stamp.nanosec for _, message in self],
-                        dtype=np.int64)
+        return np.array([_stamp_ns(message) for _, message in self], dtype=np.int64)
+
+
+def _stamp_ns(message):
+    stamp = message.header.stamp if hasattr(message, 'header') else message.timestamp
+    return stamp.sec * 1_000_000_000 + stamp.nanosec
 
 
 def _nearest(times, time):
@@ -191,6 +195,10 @@ class Bag:
         """Return an indexed topic."""
         self._check_open()
         return self._topics[name]
+
+    def video(self, name):
+        """Return a topic of CompressedVideo or FFMPEGPacket messages decoding to RGB."""
+        return VideoTopic(self.topic(name))
 
     def read(self, topics=None, start_ns=None, end_ns=None):
         """Yield messages by log time in the half-open interval [start, end)."""

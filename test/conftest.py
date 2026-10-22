@@ -80,6 +80,7 @@ def write_bag(ros, tmp_path):
     from rclpy.serialization import serialize_message
 
     def write(events, *, options='', split_size=0):
+        """Write (topic, log time, message or (type name, CDR bytes)) events."""
         name = f'bag_{len(list(tmp_path.glob("bag_*")))}'
         path = tmp_path / name
         config = tmp_path / (name + '.yaml')
@@ -94,13 +95,17 @@ def write_bag(ros, tmp_path):
                     ros.ConverterOptions('', ''))
         known = set()
         for topic, time, message in events:
-            if topic not in known:
+            if isinstance(message, tuple):
+                typename, data = message
+            else:
                 cls = type(message)
                 typename = cls.__module__.split('.')[0] + '/msg/' + cls.__name__
+                data = serialize_message(message)
+            if topic not in known:
                 writer.create_topic(ros.TopicMetadata(id=0, name=topic, type=typename,
                                                       serialization_format='cdr'))
                 known.add(topic)
-            writer.write(topic, serialize_message(message), time)
+            writer.write(topic, data, time)
         del writer
         return path
 

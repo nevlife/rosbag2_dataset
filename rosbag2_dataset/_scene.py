@@ -28,6 +28,7 @@ import numpy as np
 from ._cdr import compile_decoder
 from ._mcap import McapFile
 from .numpy import image_to_numpy, pointcloud2_to_numpy
+from .video import DECODER_THREADS
 
 
 IMAGE = 'sensor_msgs/msg/Image'
@@ -123,6 +124,7 @@ class _Video:
         import av
         self._container = av.open(str(path))
         self._stream = self._container.streams.video[0]
+        self._stream.codec_context.thread_count = DECODER_THREADS
         self._fps = Fraction(video['fps'])
         self._gop = video['gop']
         self._format = video['format']

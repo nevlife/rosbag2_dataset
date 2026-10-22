@@ -26,7 +26,9 @@ python -m rosbag2_dataset.export spec.yaml bag out [--start-ns T] [--end-ns T] [
 
 import argparse
 from dataclasses import dataclass, replace
+from fractions import Fraction
 import importlib
+import io
 import json
 from pathlib import Path
 import shutil
@@ -38,15 +40,16 @@ import pyarrow.parquet as pq
 from ._scene import cloud_points, compressed_pixels, image_pixels
 from ._scene import COMPRESSED_IMAGE, IMAGE, POINT_CLOUD
 from .bag import Bag
+from .video import codec_of, CODECS, VIDEO_TYPES
 
 
 FORMAT_VERSION = 1
 STORES = ('jpeg', 'png', 'npy', 'mp4', 'ref', 'table')
 _STORE_TYPES = {
-    'jpeg': {IMAGE, COMPRESSED_IMAGE},
-    'png': {IMAGE},
-    'mp4': {IMAGE, COMPRESSED_IMAGE},
-    'npy': {IMAGE, COMPRESSED_IMAGE, POINT_CLOUD},
+    'jpeg': {IMAGE, COMPRESSED_IMAGE, *VIDEO_TYPES},
+    'png': {IMAGE, *VIDEO_TYPES},
+    'mp4': {IMAGE, COMPRESSED_IMAGE, *VIDEO_TYPES},
+    'npy': {IMAGE, COMPRESSED_IMAGE, POINT_CLOUD, *VIDEO_TYPES},
 }
 _SPEC_KEYS = {'reference', 'scene_frames', 'time', 'sensors', 'tf', 'hooks'}
 _SENSOR_KEYS = {'topic', 'store', 'sync', 'max_ms', 'required', 'time', 'fields', 'finite',
@@ -69,7 +72,7 @@ class Sensor:
     finite: bool = False
     info: str | None = None
     quality: int = 92
-    codec: str = 'libx264'
+    codec: str | None = None
     crf: int = 23
     gop: int = 10
     fps: int | None = None
@@ -236,17 +239,26 @@ def _offset_stats(offsets):
             'max': float(values.max())}
 
 
+def _pixels(kind, video, index, message):
+    if kind == IMAGE:
+        return image_pixels(message)
+    if kind == COMPRESSED_IMAGE:
+        return compressed_pixels(message)
+    return video[index][1]
+
+
 class _FileStore:
     """Write one jpg, png, or npy file per distinct message."""
 
-    def __init__(self, sensor, kind, scene_dir):
+    def __init__(self, sensor, kind, video, scene_dir):
         self.sensor = sensor
         self.kind = kind
+        self.video = video
         self.scene_dir = scene_dir
         self.extension = {'jpeg': 'jpg', 'png': 'png', 'npy': 'npy'}[sensor.store]
         (scene_dir / sensor.name).mkdir()
 
-    def put(self, number, message):
+    def put(self, number, index, message):
         relative = f'{self.sensor.name}/{number:06d}.{self.extension}'
         path = self.scene_dir / relative
         if (self.sensor.store == 'jpeg' and self.kind == COMPRESSED_IMAGE
@@ -255,10 +267,8 @@ class _FileStore:
             return relative
         if self.kind == POINT_CLOUD:
             array = cloud_points(message, self.sensor.fields, self.sensor.finite)
-        elif self.kind == IMAGE:
-            array = image_pixels(message)
         else:
-            array = compressed_pixels(message)
+            array = _pixels(self.kind, self.video, index, message)
         if self.sensor.store == 'npy':
             np.save(path, array)
         else:
@@ -274,10 +284,12 @@ class _FileStore:
 class _VideoStore:
     """Encode distinct messages as consecutive video frames of one mp4 per scene."""
 
-    def __init__(self, sensor, kind, scene_dir, fps):
+    def __init__(self, sensor, kind, video, scene_dir, fps):
         import av
         self.sensor = sensor
         self.kind = kind
+        self.video = video
+        self.codec = sensor.codec or 'libx264'
         self.file = f'{sensor.name}.mp4'
         self.container = av.open(str(scene_dir / self.file), 'w')
         self.fps = fps
@@ -285,14 +297,14 @@ class _VideoStore:
         self.format = None
         self.count = 0
 
-    def put(self, number, message):
+    def put(self, number, index, message):
         import av
-        pixels = image_pixels(message) if self.kind == IMAGE else compressed_pixels(message)
+        pixels = _pixels(self.kind, self.video, index, message)
         if pixels.dtype != np.uint8:
             raise ValueError(f'Sensor {self.sensor.name!r}: mp4 needs 8-bit images')
         if self.stream is None:
             self.format = 'gray' if pixels.ndim == 2 else 'rgb24'
-            self.stream = self.container.add_stream(self.sensor.codec, rate=self.fps)
+            self.stream = self.container.add_stream(self.codec, rate=self.fps)
             self.stream.width, self.stream.height = pixels.shape[1], pixels.shape[0]
             self.stream.pix_fmt = 'yuv420p'
             self.stream.codec_context.gop_size = self.sensor.gop
@@ -309,10 +321,52 @@ class _VideoStore:
         self.container.close()
         if self.stream is None:
             return {}
-        return {'video': {'file': self.file, 'codec': self.sensor.codec, 'pix_fmt': 'yuv420p',
+        return {'video': {'file': self.file, 'codec': self.codec, 'pix_fmt': 'yuv420p',
                           'format': self.format, 'fps': self.fps, 'gop': self.sensor.gop,
                           'crf': self.sensor.crf, 'frames': self.count,
                           'width': self.stream.width, 'height': self.stream.height}}
+
+
+class _RemuxStore:
+    """Copy the packets from the keyframe before the scene's first message into an mp4."""
+
+    def __init__(self, sensor, video, scene_dir, fps, used):
+        self.video = video
+        self.path = scene_dir / f'{sensor.name}.mp4'
+        self.fps = fps
+        self.first = video.keyframe(int(used.min())) if len(used) else None
+        self.last = int(used.max()) if len(used) else None
+
+    def put(self, number, index, message):
+        return index - self.first
+
+    def close(self):
+        import av
+        if self.first is None:
+            return {}
+        video = self.video
+        span = range(self.first, self.last + 1)
+        packets = [video.topic[i][1].data for i in span]
+        keys = [video.is_keyframe(i) for i in span]
+        rate = Fraction(1, self.fps)
+        with av.open(io.BytesIO(packets[0]), format=CODECS[video.codec][1]) as source:
+            template = source.streams.video[0]
+            width, height = template.codec_context.width, template.codec_context.height
+            with av.open(str(self.path), 'w') as container:
+                stream = container.add_stream_from_template(template, opaque=True)
+                stream.time_base = rate
+                for number, data in enumerate(packets):
+                    packet = av.Packet(data)
+                    packet.stream = stream
+                    packet.pts = packet.dts = number
+                    packet.duration = 1
+                    packet.time_base = rate
+                    packet.is_keyframe = keys[number]
+                    container.mux(packet)
+        return {'video': {'file': self.path.name, 'codec': video.codec, 'remux': True,
+                          'format': 'rgb24', 'fps': self.fps,
+                          'gop': int(np.diff([*np.flatnonzero(keys), len(keys)]).max()),
+                          'frames': len(packets), 'width': width, 'height': height}}
 
 
 class _RefStore:
@@ -357,6 +411,8 @@ class Exporter:
                 sensor = replace(sensor, fields=tuple(f.name for f in fields if f.count == 1))
             self.frame_sensors.append(sensor)
         self.table_sensors = [s for s in spec.sensors if s.store == 'table']
+        self.videos = {s.name: reader.video(s.topic) for s in self.frame_sensors
+                       if reader.topics[s.topic].type in VIDEO_TYPES and s.store != 'ref'}
         topics = [spec.reference] + [s.topic for s in self.frame_sensors
                                      if s.topic != spec.reference]
         never = np.iinfo(np.int64).max
@@ -449,13 +505,19 @@ class Exporter:
         for sensor in self.frame_sensors:
             topic = reader.topic(sensor.topic)
             kind = reader.topics[sensor.topic].type
+            video = self.videos.get(sensor.name)
             if sensor.store == 'ref':
                 stores[sensor.name] = _RefStore(sensor, topic, self.source_dir)
+            elif sensor.store == 'mp4' and video is not None and sensor.codec is None:
+                used = indices[:, self.columns[sensor.topic]]
+                steps = np.diff(topic.times)
+                fps = sensor.fps or (max(1, round(1e9 / np.median(steps))) if len(steps) else 1)
+                stores[sensor.name] = _RemuxStore(sensor, video, scene_dir, fps, used[used >= 0])
             elif sensor.store == 'mp4':
                 fps = sensor.fps or max(1, round(self.rate_hz or 1))
-                stores[sensor.name] = _VideoStore(sensor, kind, scene_dir, fps)
+                stores[sensor.name] = _VideoStore(sensor, kind, video, scene_dir, fps)
             else:
-                stores[sensor.name] = _FileStore(sensor, kind, scene_dir)
+                stores[sensor.name] = _FileStore(sensor, kind, video, scene_dir)
         values = {sensor.name: [] for sensor in self.frame_sensors}
         reused = dict.fromkeys(values, 0)
         previous = {}
@@ -479,7 +541,7 @@ class Exporter:
                 else:
                     message = reader.topic(sensor.topic)[index][1]
                     messages[sensor.name] = message
-                    value = stores[sensor.name].put(number, message)
+                    value = stores[sensor.name].put(number, index, message)
                 if index >= 0:
                     previous[sensor.name] = (index, value)
                 values[sensor.name].append(value)
@@ -544,20 +606,23 @@ class Exporter:
         meta = {'topic': sensor.topic, 'type': kind, 'store': sensor.store,
                 'max_ms': None if sensor.max_ns is None else sensor.max_ns / 1e6,
                 'required': sensor.required}
-        if hasattr(message, 'header'):
-            meta['frame_id'] = message.header.frame_id
+        header = getattr(message, 'header', message)
+        if hasattr(header, 'frame_id'):
+            meta['frame_id'] = header.frame_id
         if kind == IMAGE:
             meta.update(encoding=message.encoding, width=message.width, height=message.height)
+        if kind in VIDEO_TYPES:
+            meta['codec'] = codec_of(message)
         if kind == POINT_CLOUD:
             meta.update(fields=list(sensor.fields), finite=sensor.finite)
         if sensor.store == 'jpeg':
             meta['quality'] = sensor.quality
         info = sensor.info
-        if info is None and kind in (IMAGE, COMPRESSED_IMAGE):
-            sibling = sensor.topic.rsplit('/', 1)[0] + '/camera_info'
-            if sensor.topic.endswith('/compressed'):
-                sibling = sensor.topic.rsplit('/', 2)[0] + '/camera_info'
-            info = sibling if sibling in reader.topics else None
+        if info is None and kind in (IMAGE, COMPRESSED_IMAGE, *VIDEO_TYPES):
+            siblings = [sensor.topic.rsplit('/', 1)[0] + '/camera_info']
+            if kind != IMAGE:
+                siblings.append(sensor.topic.rsplit('/', 2)[0] + '/camera_info')
+            info = next((topic for topic in siblings if topic in reader.topics), None)
         if info is not None:
             camera = reader.topic(info)
             calibration = camera[camera.nearest(first_log)][1]

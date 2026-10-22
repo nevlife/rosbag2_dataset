@@ -52,6 +52,23 @@ with named fields and subarrays for fields with count > 1. Both preserve byte
 order and row padding; images preserve channel order.
 
 ```python
+with rd.open('/data/run') as bag:
+    video = bag.video('/camera/image_raw/foxglove')
+    time_ns, rgb = video[video.nearest(123456789)]   # HxWx3 uint8
+```
+
+`bag.video()` decodes H.264, H.265, and AV1 topics recorded as
+`foxglove_msgs/msg/CompressedVideo` (Foxglove's `format`; `foxglove`
+image_transport, rosbag2_broll) or `ffmpeg_image_transport_msgs/msg/FFMPEGPacket`
+(`ffmpeg_image_transport`; first token of `encoding`) with PyAV (`pip install .[video]`).
+Each message must hold one frame and the stream must have no B-frames, as Foxglove
+requires. Reading a message decodes from the keyframe at or before it; reading the
+next message continues the decoder. Keyframes are the FFMPEGPacket key flag, or in
+CompressedVideo an H.264 IDR, an H.265 IRAP picture, or an AV1 sequence header.
+Messages before the first keyframe raise an error. `stamps('header')` uses the
+Foxglove `timestamp` field. Decoders run single-threaded.
+
+```python
 from rosbag2_dataset.torch import BagDataset
 
 samples = BagDataset(['/data/run1', '/data/run2'], ['/camera/image', '/imu'],
@@ -105,12 +122,19 @@ hooks: my_package.export:extra   # optional, one or a list of module:function
 | `fields`, `finite` | PointCloud2 fields as N x C columns of one dtype (default: all scalar fields); `finite` drops points with any non-finite field |
 | `info` | CameraInfo topic; default is the sibling `camera_info` of an image topic |
 | `quality` | JPEG quality (92) |
-| `codec`, `crf`, `gop`, `fps` | mp4 encoding (`libx264`, 23, 10, reference rate) |
+| `codec`, `crf`, `gop`, `fps` | mp4 encoding (`libx264`, 23, 10, reference rate); a video topic is remuxed unless `codec` is set |
 
 Stores accept `sensor_msgs/msg/Image` (`jpeg`, `png`, `npy`, `mp4`),
-`CompressedImage` (`jpeg`, `npy`, `mp4`; JPEG data is copied unchanged), and
+`CompressedImage` (`jpeg`, `npy`, `mp4`; JPEG data is copied unchanged),
+`CompressedVideo` and `FFMPEGPacket` (`jpeg`, `png`, `npy`, `mp4`; decoded RGB), and
 `PointCloud2` (`npy`). `ref` and `table` accept any type. Images are stored as RGB
 or single-channel pixels; `bgr8` is reordered and alpha is dropped.
+
+`mp4` on a video topic copies the packets without re-encoding: from the keyframe at
+or before the scene's first message to its last message, including messages no
+frame uses, at the topic's median rate (or `fps`). Its frames.parquet value is
+the message index minus that keyframe's. Setting `codec` decodes and re-encodes the
+distinct messages instead, as for images.
 
 `tf.base` resolves `T_base_sensor` of each sensor's `header.frame_id` over
 `/tf_static`. `tf.dynamic` names the world frame; `T_world_base` is then
@@ -126,13 +150,14 @@ under `scene_dir` move with the scene.
 out/<bag name>/<bag name>_<first frame time, 19 digits>/
   scene.json        format version, spec copy, reference, time source, rate, source bag
                     files and range, tf frames, sensors: topic, type, store, frame_id,
-                    camera intrinsics (K, D, R, P), T_base_sensor, video, schema, stats
+                    video codec, camera intrinsics (K, D, R, P), T_base_sensor, video,
+                    schema, stats
   frames.parquet    timestamp_ns, per sensor: <name> path (mp4: video frame index),
                     or <name>_file, _chunk, _record for ref; <name>_offset_ns;
                     T_world_base (16 float64, row-major) with tf.dynamic; hook columns
   <name>.parquet    table sensors: timestamp_ns, log_time_ns, flattened fields
   <name>/000000.jpg one file per distinct message; repeated messages repeat the path
-  <name>.mp4        consecutive distinct messages of the scene
+  <name>.mp4        consecutive distinct messages of the scene, or copied packets
 ```
 
 `<name>_offset_ns` is the chosen message's time minus the frame's time. Where the
@@ -175,7 +200,8 @@ sample = samples[0]   # frames.parquet columns plus scene, frame; front is HxWx3
 `SceneDataset` takes scene folders or roots to search, returns NumPy arrays
 (None where a frame has no message) and a 4x4 `T_world_base`, and reopens bags and
 videos in each worker. mp4 decoding continues forward for sequential reads and
-seeks to the previous keyframe otherwise.
+seeks to the previous keyframe otherwise. A `ref` sensor on a video topic returns
+the decoded packet message, not pixels.
 
 ## Limits
 
@@ -205,8 +231,10 @@ python3 benchmark/bench_read.py --bag "$BAG_SCRATCH/benchmark" --reuse --touch
 
 Set `BAG_SCRATCH` to your writable temporary bag directory and `ROS_LOG_DIR` to a
 writable log directory. Export tests are skipped without pyarrow
-and Pillow, and the mp4 test without PyAV. Tests use ROS writers and serializers as references,
-without DDS. The benchmark defaults to 1000 1920x1080 rgb8 images plus 2000 Imus,
+and Pillow, and the mp4 and video tests without PyAV. Video tests encode H.264, H.265,
+and AV1 with PyAV and write CompressedVideo and FFMPEGPacket bags from their message
+definitions without those packages. Tests use ROS writers and serializers as
+references, without DDS. The benchmark defaults to 1000 1920x1080 rgb8 images plus 2000 Imus,
 uncompressed, with three fresh processes per reader. It reports open+full-message
 decode time and process peak RSS, including imports in RSS but excluding imports
 from timing. Decode-only leaves pixel views lazy; `--touch` additionally sums every
