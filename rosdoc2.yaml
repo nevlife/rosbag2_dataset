@@ -1,0 +1,16 @@
+## rosdoc2 configuration: Python API reference plus the pages in doc/ (a link to docs/).
+type: 'rosdoc2 config'
+version: 1
+
+---
+
+settings:
+    generate_package_index: true
+    python_source: 'rosbag2_dataset'
+    always_run_doxygen: false
+    always_run_sphinx_apidoc: false
+builders:
+    - sphinx: {
+        name: 'rosbag2_dataset',
+        output_dir: ''
+    }
