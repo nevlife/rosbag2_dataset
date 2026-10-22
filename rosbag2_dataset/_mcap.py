@@ -90,6 +90,9 @@ class McapFile:
                 raise ValueError(f'Not an MCAP file: {path}')
             if index:
                 self._index()
+        except (struct.error, OverflowError) as error:
+            self.close()
+            raise ValueError(f'Corrupt MCAP file: {path}') from error
         except BaseException:
             self.close()
             raise
@@ -175,7 +178,7 @@ class McapFile:
                 raise ModuleNotFoundError(
                     "MCAP lz4 chunks require the missing module 'lz4' (pip install lz4)"
                 ) from error
-            decoded = lz4.frame.decompress(data)
+            decompress, errors = lz4.frame.decompress, RuntimeError
         elif compression == 'zstd':
             try:
                 import zstandard
@@ -184,9 +187,13 @@ class McapFile:
                     "MCAP zstd chunks require the missing module 'zstandard' "
                     '(pip install zstandard)'
                 ) from error
-            decoded = zstandard.ZstdDecompressor().decompress(data)
+            decompress, errors = zstandard.ZstdDecompressor().decompress, zstandard.ZstdError
         else:
             raise ValueError(f'Unsupported MCAP chunk compression: {compression!r}')
+        try:
+            decoded = decompress(data)
+        except errors as error:
+            raise ValueError(f'Corrupt MCAP chunk at {offset} in {self.path}') from error
         self.cache[offset] = decoded
         if len(self.cache) > self.cache_size:
             self.cache.popitem(last=False)
@@ -194,8 +201,11 @@ class McapFile:
 
     def raw(self, chunk, offset):
         """Return the CDR bytes of an indexed message without copying."""
-        buffer = memoryview(self.mapping) if chunk == -1 else self.chunk(chunk)
-        size = _U64.unpack_from(buffer, offset + 1)[0]
+        try:
+            buffer = memoryview(self.mapping) if chunk == -1 else self.chunk(chunk)
+            size = _U64.unpack_from(buffer, offset + 1)[0]
+        except (struct.error, OverflowError) as error:
+            raise ValueError(f'Corrupt MCAP record at {offset} in {self.path}') from error
         return buffer[offset + 31:offset + 9 + size]
 
     def close(self):
