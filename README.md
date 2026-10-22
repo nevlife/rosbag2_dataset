@@ -173,7 +173,7 @@ Only `ros2msg` schemas and plain XCDR1 CDR (both byte orders) are decoded. Embed
 dependent definitions, all ROS message primitives, strings/wstrings, nested
 messages, fixed arrays, bounded/unbounded sequences, constants, and defaults are
 supported. IDL-only schemas, XCDR2, and parameter-list CDR are unsupported;
-`raw()` still exposes their bytes. PointField datatypes 1–8 are supported.
+`raw()` still exposes their bytes. PointField datatypes 1-8 are supported.
 Timestamps must fit signed int64. Attachments, metadata, and summary statistics
 are skipped; CRCs are not validated. Indexed opening reads summary/message
 indexes and top-level record headers, never indexed chunk contents. Missing
