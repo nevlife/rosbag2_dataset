@@ -35,7 +35,7 @@ setup(
     ],
     install_requires=['setuptools', 'numpy'],
     extras_require={'lz4': ['lz4'], 'zstd': ['zstandard'], 'torch': ['torch'],
-                    'export': ['pyarrow', 'pyyaml', 'pillow']},
+                    'export': ['pyarrow', 'pyyaml', 'pillow'], 'video': ['av']},
     python_requires='>=3.10',
     zip_safe=False,
     maintainer='nevlife',

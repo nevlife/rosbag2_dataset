@@ -147,7 +147,7 @@ def frames(scene):
 def test_spec(tmp_path):
     path = tmp_path / 'spec.yaml'
     path.write_text('reference: /lidar\nscene_frames: 3\ntime: log\n'
-                    'sensors:\n  lidar: {topic: /lidar, store: npy}\n'
+                    'sensors:\n  lidar: {topic: /lidar, store: ref}\n'
                     '  cam: {topic: /cam, store: jpeg, max_ms: 12.5, required: true}\n'
                     'hooks: test_export:frame_hook\n')
     parsed = load_spec(path)
@@ -270,6 +270,67 @@ def test_atomic_rewrite(scene_bag, tmp_path):
     with pytest.raises(ValueError, match='does not accept'):
         export({**spec(), 'sensors': {'lidar': {'topic': '/lidar', 'store': 'png'}}},
                scene_bag, tmp_path / 'out')
+
+
+@pytest.mark.parametrize('options', ['', 'compression: Lz4\nforceCompression: true\n'])
+def test_ref_round_trip(write_bag, scene_bag, tmp_path, options):
+    if options:
+        scene_bag = write_bag([(t, time, m) for t, time, m in _events(scene_bag)],
+                              options=options)
+    export(spec(cam={**CAM, 'store': 'npy'}), scene_bag, tmp_path / 'files')
+    single = next(scene_bag.glob('*.mcap'))
+    refs = export({**spec(cam={**CAM, 'store': 'ref'}),
+                   'sensors': {'lidar': {'topic': '/lidar', 'store': 'ref', 'finite': True,
+                                         'fields': ['x', 'y', 'z', 'intensity']},
+                               'cam': {**CAM, 'store': 'ref'}}},
+                  single, tmp_path / 'refs')
+    assert refs[0].parent.name == single.stem
+    columns = frames(refs[0])
+    assert columns['cam_file'][0] == single.name
+    assert columns['cam_chunk'][0] >= -1 and columns['cam_record'][0] > 0
+    assert not (refs[0] / 'cam').exists()
+    meta = json.loads((refs[0] / 'scene.json').read_text())
+    assert meta['sensors']['cam']['schema']['name'] == 'sensor_msgs/msg/Image'
+    with SceneDataset(tmp_path / 'files') as expected, SceneDataset(tmp_path / 'refs') as actual:
+        assert len(expected) == len(actual) == FRAMES
+        for index in range(FRAMES):
+            a, b = expected[index], actual[index]
+            for name in ('lidar', 'cam'):
+                if a[name] is None:
+                    assert b[name] is None and index == 3
+                else:
+                    np.testing.assert_array_equal(a[name], b[name])
+        np.testing.assert_array_equal(actual[4]['cam'], pixels(8))
+
+
+def _events(path):
+    import rosbag2_py
+    from rclpy.serialization import deserialize_message
+    from rosidl_runtime_py.utilities import get_message
+    reader = rosbag2_py.SequentialReader()
+    reader.open(rosbag2_py.StorageOptions(uri=str(path), storage_id='mcap'),
+                rosbag2_py.ConverterOptions('', ''))
+    types = {t.name: get_message(t.type) for t in reader.get_all_topics_and_types()}
+    while reader.has_next():
+        topic, data, time = reader.read_next()
+        yield topic, time, deserialize_message(data, types[topic])
+
+
+def test_mp4(scene_bag, tmp_path):
+    pytest.importorskip('av')
+    scenes = export(spec(cam={**CAM, 'store': 'mp4', 'gop': 2, 'crf': 10}),
+                    scene_bag, tmp_path / 'out')
+    meta = json.loads((scenes[0] / 'scene.json').read_text())['sensors']['cam']
+    assert meta['video']['file'] == 'cam.mp4' and meta['video']['fps'] == 10
+    assert meta['video']['codec'] == 'libx264' and meta['video']['pix_fmt'] == 'yuv420p'
+    assert meta['video']['frames'] == 3
+    assert frames(scenes[0])['cam'] == [0, 1, 2, None]
+    with SceneDataset(tmp_path / 'out') as samples:
+        order = [4, 0, 9, 8, 5, 6, 1, 2, 7]
+        for index in order:
+            j = 2 * index
+            assert np.abs(samples[index]['cam'].astype(np.int16) - pixels(j)).mean() < 3
+        assert samples[3]['cam'] is None
 
 
 def test_scene_dataset(scene_bag, tmp_path):

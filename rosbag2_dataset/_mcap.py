@@ -76,7 +76,7 @@ class Channel:
 class McapFile:
     """Own a mapping, channel definitions, and a bounded decompression cache."""
 
-    def __init__(self, path, chunk_cache_size=4):
+    def __init__(self, path, chunk_cache_size=4, *, index=True):
         self.path = path
         self.cache_size = chunk_cache_size
         self.cache = OrderedDict()
@@ -88,7 +88,8 @@ class McapFile:
         try:
             if self.mapping[:8] != MAGIC:
                 raise ValueError(f'Not an MCAP file: {path}')
-            self._index()
+            if index:
+                self._index()
         except BaseException:
             self.close()
             raise

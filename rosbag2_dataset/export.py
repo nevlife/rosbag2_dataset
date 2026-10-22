@@ -41,15 +41,16 @@ from .bag import Bag
 
 
 FORMAT_VERSION = 1
-STORES = ('jpeg', 'png', 'npy', 'table')
+STORES = ('jpeg', 'png', 'npy', 'mp4', 'ref', 'table')
 _STORE_TYPES = {
     'jpeg': {IMAGE, COMPRESSED_IMAGE},
     'png': {IMAGE},
+    'mp4': {IMAGE, COMPRESSED_IMAGE},
     'npy': {IMAGE, COMPRESSED_IMAGE, POINT_CLOUD},
 }
 _SPEC_KEYS = {'reference', 'scene_frames', 'time', 'sensors', 'tf', 'hooks'}
 _SENSOR_KEYS = {'topic', 'store', 'sync', 'max_ms', 'required', 'time', 'fields', 'finite',
-                'info', 'quality'}
+                'info', 'quality', 'codec', 'crf', 'gop', 'fps'}
 _TF_KEYS = {'base', 'static', 'dynamic'}
 _POSE = pa.list_(pa.float64(), 16)
 
@@ -68,6 +69,10 @@ class Sensor:
     finite: bool = False
     info: str | None = None
     quality: int = 92
+    codec: str = 'libx264'
+    crf: int = 23
+    gop: int = 10
+    fps: int | None = None
 
 
 @dataclass(frozen=True)
@@ -113,8 +118,8 @@ def load_spec(source):
         if entry.get('sync', 'nearest') != 'nearest':
             raise ValueError(f"Sensor {name!r}: only sync 'nearest' is supported")
         max_ms = entry.get('max_ms')
-        options = {key: entry[key] for key in ('required', 'finite', 'info', 'quality')
-                   if key in entry}
+        options = {key: entry[key] for key in ('required', 'finite', 'info', 'quality',
+                                               'codec', 'crf', 'gop', 'fps') if key in entry}
         sensors.append(Sensor(
             name, entry['topic'], entry['store'],
             max_ns=None if max_ms is None else round(max_ms * 1e6),
@@ -266,6 +271,66 @@ class _FileStore:
         return {}
 
 
+class _VideoStore:
+    """Encode distinct messages as consecutive video frames of one mp4 per scene."""
+
+    def __init__(self, sensor, kind, scene_dir, fps):
+        import av
+        self.sensor = sensor
+        self.kind = kind
+        self.file = f'{sensor.name}.mp4'
+        self.container = av.open(str(scene_dir / self.file), 'w')
+        self.fps = fps
+        self.stream = None
+        self.format = None
+        self.count = 0
+
+    def put(self, number, message):
+        import av
+        pixels = image_pixels(message) if self.kind == IMAGE else compressed_pixels(message)
+        if pixels.dtype != np.uint8:
+            raise ValueError(f'Sensor {self.sensor.name!r}: mp4 needs 8-bit images')
+        if self.stream is None:
+            self.format = 'gray' if pixels.ndim == 2 else 'rgb24'
+            self.stream = self.container.add_stream(self.sensor.codec, rate=self.fps)
+            self.stream.width, self.stream.height = pixels.shape[1], pixels.shape[0]
+            self.stream.pix_fmt = 'yuv420p'
+            self.stream.codec_context.gop_size = self.sensor.gop
+            self.stream.options = {'crf': str(self.sensor.crf)}
+        frame = av.VideoFrame.from_ndarray(np.ascontiguousarray(pixels), format=self.format)
+        frame.pts = self.count
+        self.container.mux(self.stream.encode(frame))
+        self.count += 1
+        return self.count - 1
+
+    def close(self):
+        if self.stream is not None:
+            self.container.mux(self.stream.encode(None))
+        self.container.close()
+        if self.stream is None:
+            return {}
+        return {'video': {'file': self.file, 'codec': self.sensor.codec, 'pix_fmt': 'yuv420p',
+                          'format': self.format, 'fps': self.fps, 'gop': self.sensor.gop,
+                          'crf': self.sensor.crf, 'frames': self.count,
+                          'width': self.stream.width, 'height': self.stream.height}}
+
+
+class _RefStore:
+    """Record where each message lives in the bag instead of copying it."""
+
+    def __init__(self, sensor, topic, source_dir):
+        self.topic = topic
+        self.source_dir = source_dir
+
+    def put(self, index):
+        path, chunk, record = self.topic.location(index)
+        return str(path.relative_to(self.source_dir)), chunk, record
+
+    def close(self):
+        name, encoding, text = self.topic.schema()
+        return {'schema': {'name': name, 'encoding': encoding, 'text': text}}
+
+
 class Exporter:
     """Synchronize a bag once and write its scenes one at a time."""
 
@@ -381,8 +446,15 @@ class Exporter:
         sensors = {}
         stores = {}
         for sensor in self.frame_sensors:
+            topic = reader.topic(sensor.topic)
             kind = reader.topics[sensor.topic].type
-            stores[sensor.name] = _FileStore(sensor, kind, scene_dir)
+            if sensor.store == 'ref':
+                stores[sensor.name] = _RefStore(sensor, topic, self.source_dir)
+            elif sensor.store == 'mp4':
+                fps = sensor.fps or max(1, round(self.rate_hz or 1))
+                stores[sensor.name] = _VideoStore(sensor, kind, scene_dir, fps)
+            else:
+                stores[sensor.name] = _FileStore(sensor, kind, scene_dir)
         values = {sensor.name: [] for sensor in self.frame_sensors}
         reused = dict.fromkeys(values, 0)
         previous = {}
@@ -397,6 +469,10 @@ class Exporter:
                 elif previous.get(sensor.name, (None,))[0] == index:
                     value = previous[sensor.name][1]
                     reused[sensor.name] += 1
+                    if spec.hooks:
+                        messages[sensor.name] = reader.topic(sensor.topic)[index][1]
+                elif sensor.store == 'ref':
+                    value = stores[sensor.name].put(index)
                     if spec.hooks:
                         messages[sensor.name] = reader.topic(sensor.topic)[index][1]
                 else:
@@ -418,7 +494,14 @@ class Exporter:
             column = self.columns[sensor.topic]
             present = indices[:, column] >= 0
             name = sensor.name
-            columns[name] = pa.array(values[name], pa.string())
+            if sensor.store == 'ref':
+                refs = [value or (None, None, None) for value in values[name]]
+                columns[name + '_file'] = pa.array([r[0] for r in refs], pa.string())
+                columns[name + '_chunk'] = pa.array([r[1] for r in refs], pa.int64())
+                columns[name + '_record'] = pa.array([r[2] for r in refs], pa.int64())
+            else:
+                kind = pa.int64() if sensor.store == 'mp4' else pa.string()
+                columns[name] = pa.array(values[name], kind)
             offsets = times[:, column] - reference_times
             columns[name + '_offset_ns'] = pa.array(offsets, pa.int64())
             sensors[name] = self._sensor_meta(sensor, indices[present, column], first_log)

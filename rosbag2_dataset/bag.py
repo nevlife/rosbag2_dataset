@@ -84,6 +84,18 @@ class Topic:
         """Return the nearest index; ties select the earlier timestamp."""
         return _nearest(self.times, time_ns)
 
+    def location(self, index):
+        """Return (MCAP path, chunk offset or -1, record offset) of a message."""
+        time, file_id, channel, chunk, offset = self._entry(index)
+        return self._bag._files[file_id].path, int(chunk), int(offset)
+
+    def schema(self):
+        """Return the (name, encoding, text) schema of this topic."""
+        file_id, channel = map(int, self._entries[0, 1:3])
+        file = self._bag._files[file_id]
+        schema = file.schemas[file.channels[channel].schema_id]
+        return schema.name, schema.encoding, schema.text
+
     def stamps(self, time_source='log'):
         """Return int64 log times or header stamps, in log-time order."""
         if time_source == 'log':
