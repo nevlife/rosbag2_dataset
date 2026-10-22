@@ -20,6 +20,7 @@
 
 """Expose indexed topics, time ordered reads, and nearest-time synchronization."""
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 import heapq
 import operator
@@ -83,6 +84,16 @@ class Topic:
         """Return the nearest index; ties select the earlier timestamp."""
         return _nearest(self.times, time_ns)
 
+    def stamps(self, time_source='log'):
+        """Return int64 log times or header stamps, in log-time order."""
+        if time_source == 'log':
+            return self.times
+        if time_source != 'header':
+            raise ValueError("time_source must be 'log' or 'header'")
+        return np.array([message.header.stamp.sec * 1_000_000_000 +
+                         message.header.stamp.nanosec for _, message in self],
+                        dtype=np.int64)
+
 
 def _nearest(times, time):
     if not len(times):
@@ -96,12 +107,20 @@ def _nearest(times, time):
 
 
 class Synced:
-    """Hold random-access tuples of topic indices in reference-time order."""
+    """
+    Hold random-access tuples of topic indices in reference-time order.
 
-    def __init__(self, topics, indices):
+    times holds the clock of each chosen message; where an optional topic has
+    index -1, it holds the nearest clock beyond tolerance, or the reference
+    clock if that topic is empty.
+    """
+
+    def __init__(self, topics, indices, times):
         self.topics = tuple(topics)
         self.indices = np.asarray(indices, dtype=np.int64).reshape(-1, len(topics))
+        self.times = np.asarray(times, dtype=np.int64).reshape(-1, len(topics))
         self.indices.flags.writeable = False
+        self.times.flags.writeable = False
 
     def __len__(self):
         return len(self.indices)
@@ -178,15 +197,27 @@ class Bag:
             time, message = self._topics[name][index]
             yield name, time, message
 
-    def synced(self, topics, reference=None, tolerance_ns=0, *, time_source='log'):
-        """Align nearest times, omitting reference rows outside the tolerance."""
+    def synced(self, topics, reference=None, tolerance_ns=0, *, time_source='log',
+               optional=()):
+        """
+        Align nearest times in reference log-time order.
+
+        tolerance_ns is one value or a mapping from each non-reference topic to its
+        own. A row is omitted when a topic is beyond tolerance, unless the topic is
+        optional; then its index is -1.
+        """
         topics = tuple(topics)
         if not topics or len(set(topics)) != len(topics):
             raise ValueError('topics must contain distinct topic names')
         reference = topics[0] if reference is None else reference
         if reference not in topics:
             raise ValueError('reference must be one of topics')
-        if tolerance_ns < 0:
+        optional = set(optional)
+        if not optional <= set(topics) - {reference}:
+            raise ValueError('optional must name non-reference topics')
+        limits = {name: tolerance_ns[name] if isinstance(tolerance_ns, Mapping)
+                  else tolerance_ns for name in topics if name != reference}
+        if any(limit < 0 for limit in limits.values()):
             raise ValueError('tolerance_ns must be nonnegative')
         if time_source not in ('log', 'header'):
             raise ValueError("time_source must be 'log' or 'header'")
@@ -194,33 +225,37 @@ class Bag:
         original_clocks = {}
         orders = {}
         for name in topics:
-            topic = self.topic(name)
-            if time_source == 'log':
-                clock = topic.times
-            else:
-                clock = np.array([message.header.stamp.sec * 1_000_000_000 +
-                                  message.header.stamp.nanosec for _, message in topic],
-                                 dtype=np.int64)
+            clock = self.topic(name).stamps(time_source)
             original_clocks[name] = clock
             orders[name] = np.argsort(clock, kind='stable')
             clocks[name] = clock[orders[name]]
         rows = []
+        times = []
         for ref_index in range(len(self.topic(reference))):
             ref_time = int(original_clocks[reference][ref_index])
             row = []
+            row_times = []
             for name in topics:
                 if name == reference:
                     row.append(ref_index)
-                elif not len(clocks[name]):
+                    row_times.append(ref_time)
+                    continue
+                time = ref_time
+                if len(clocks[name]):
+                    index = _nearest(clocks[name], ref_time)
+                    time = int(clocks[name][index])
+                    if abs(time - ref_time) <= limits[name]:
+                        row.append(int(orders[name][index]))
+                        row_times.append(time)
+                        continue
+                if name not in optional:
                     break
-                else:
-                    index = _nearest(clocks[name], int(ref_time))
-                    if abs(int(clocks[name][index]) - int(ref_time)) > tolerance_ns:
-                        break
-                    row.append(int(orders[name][index]))
-            if len(row) == len(topics):
+                row.append(-1)
+                row_times.append(time)
+            else:
                 rows.append(row)
-        return Synced(topics, rows)
+                times.append(row_times)
+        return Synced(topics, rows, times)
 
     def close(self):
         """Close the bag; previously exported arrays remain valid."""
