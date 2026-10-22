@@ -88,7 +88,7 @@ pages count toward RSS, so zero-copy does not guarantee lower peak RSS.
 cd <workspace>
 colcon build --symlink-install --packages-select rosbag2_dataset
 source install/setup.bash
-cd <path to rosbag2>/rosbag2_dataset
+cd <path to rosbag2_dataset>
 pytest test --basetemp="$BAG_SCRATCH/pytest"
 python3 benchmark/bench_read.py --bag "$BAG_SCRATCH/benchmark"
 python3 benchmark/bench_read.py --bag "$BAG_SCRATCH/benchmark" --reuse --touch
@@ -101,3 +101,7 @@ uncompressed, with three fresh processes per reader. It reports open+full-messag
 decode time and process peak RSS, including imports in RSS but excluding imports
 from timing. Decode-only leaves pixel views lazy; `--touch` additionally sums every
 image byte for both readers. See [measured results](benchmark/RESULTS.md).
+
+## License
+
+MIT. See [LICENSE](LICENSE).

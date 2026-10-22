@@ -4,8 +4,8 @@
   <name>rosbag2_dataset</name>
   <version>0.1.0</version>
   <description>Indexed NumPy views of rosbag2 MCAP messages without ROS.</description>
-  <maintainer email="ros-tooling@googlegroups.com">rosbag2 maintainers</maintainer>
-  <license>Apache-2.0</license>
+  <maintainer email="nevlife000720@gmail.com">nevlife</maintainer>
+  <license>MIT</license>
   <exec_depend>python3-numpy</exec_depend>
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>
