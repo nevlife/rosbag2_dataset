@@ -166,6 +166,7 @@ class McapFile:
         if offset in self.cache:
             self.cache.move_to_end(offset)
             return memoryview(self.cache[offset])
+        uncompressed = _U64.unpack_from(self.mapping, offset + 9 + 16)[0]
         compression, pos = _string(self.mapping, offset + 9 + 28)
         size = _U64.unpack_from(self.mapping, pos)[0]
         data = memoryview(self.mapping)[pos + 8:pos + 8 + size]
@@ -178,7 +179,12 @@ class McapFile:
                 raise ModuleNotFoundError(
                     "MCAP lz4 chunks require the missing module 'lz4' (pip install lz4)"
                 ) from error
-            decompress, errors = lz4.frame.decompress, RuntimeError
+            errors = RuntimeError
+
+            def decompress():
+                if lz4.frame.get_frame_info(data)['content_size'] not in (0, uncompressed):
+                    raise RuntimeError('lz4 frame and chunk sizes differ')
+                return lz4.frame.decompress(data)
         elif compression == 'zstd':
             try:
                 import zstandard
@@ -187,13 +193,22 @@ class McapFile:
                     "MCAP zstd chunks require the missing module 'zstandard' "
                     '(pip install zstandard)'
                 ) from error
-            decompress, errors = zstandard.ZstdDecompressor().decompress, zstandard.ZstdError
+            errors = zstandard.ZstdError
+
+            def decompress():
+                if zstandard.frame_content_size(data) not in (-1, uncompressed):
+                    raise zstandard.ZstdError('zstd frame and chunk sizes differ')
+                return zstandard.ZstdDecompressor().decompress(
+                    data, max_output_size=uncompressed)
         else:
             raise ValueError(f'Unsupported MCAP chunk compression: {compression!r}')
+        # Both decompressors allocate the declared size up front; zstd expands 2^15 times at most.
         try:
-            decoded = decompress(data)
+            decoded = decompress() if uncompressed <= len(data) << 15 else b''
         except errors as error:
             raise ValueError(f'Corrupt MCAP chunk at {offset} in {self.path}') from error
+        if len(decoded) != uncompressed:
+            raise ValueError(f'Corrupt MCAP chunk at {offset} in {self.path}')
         self.cache[offset] = decoded
         if len(self.cache) > self.cache_size:
             self.cache.popitem(last=False)

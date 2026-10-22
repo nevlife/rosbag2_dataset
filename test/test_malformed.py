@@ -86,13 +86,41 @@ def test_raw_offset_beyond_file(tmp_path):
     file.close()
 
 
+def chunk(compression, frame, size):
+    return record(6, struct.pack('<QQQI', 0, 0, size, 0) + string(compression)
+                  + struct.pack('<Q', len(frame)) + frame)
+
+
+def compress(compression, data, **options):
+    if compression == 'lz4':
+        return pytest.importorskip('lz4.frame').compress(data, **options)
+    return pytest.importorskip('zstandard').ZstdCompressor(**options).compress(data)
+
+
 @pytest.mark.parametrize('compression', ['lz4', 'zstd'])
 def test_corrupt_compressed_chunk(tmp_path, compression):
-    pytest.importorskip({'lz4': 'lz4', 'zstd': 'zstandard'}[compression])
-    data = b'\xff' * 32
-    body = struct.pack('<QQQI', 0, 0, 64, 0) + string(compression) + struct.pack('<Q', len(data))
+    data = schema() + channel() + message()
+    for frame in (b'\xff' * 32, compress(compression, data)[:-4]):
+        with pytest.raises(ValueError, match='Corrupt MCAP'):
+            dataset.open(write(tmp_path, chunk(compression, frame, len(data))))
+
+
+@pytest.mark.parametrize('compression, options', [
+    ('lz4', {'store_size': False}), ('zstd', {'write_content_size': False})])
+def test_chunk_without_content_size(tmp_path, compression, options):
+    data = schema() + channel() + message()
+    frame = compress(compression, data, **options)
+    with dataset.open(write(tmp_path, chunk(compression, frame, len(data)))) as bag:
+        assert bag.topic('/one')[0][1].value == 7
+
+
+def test_chunk_content_size_beyond_data(tmp_path):
+    data = schema() + channel() + message()
+    frame = compress('zstd', data)
+    assert frame[4] == 0x20
+    frame = frame[:4] + b'\xe0' + struct.pack('<Q', 1 << 50) + frame[6:]
     with pytest.raises(ValueError, match='Corrupt MCAP'):
-        dataset.open(write(tmp_path, record(6, body + data)))
+        dataset.open(write(tmp_path, chunk('zstd', frame, len(data))))
 
 
 def test_message_on_unknown_channel(tmp_path):
