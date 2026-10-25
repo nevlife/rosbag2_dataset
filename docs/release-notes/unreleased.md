@@ -25,7 +25,7 @@ add the same entries to `CHANGELOG.rst`.
 
 ### Workflow
 
-* Moved from `nevlife/rosbag2` into its own repository with its history; relicensed to MIT
+* Moved out of the rosbag2 fork into its own repository with its history; relicensed to MIT
 * Split the README into an entry page and `docs/`; added release notes, `CHANGELOG.rst`, and a rosdoc2 configuration
 
 ### New API features
