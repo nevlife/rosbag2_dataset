@@ -16,10 +16,13 @@ add the same entries to `CHANGELOG.rst`.
 * `image_to_numpy()` and `pointcloud2_to_numpy()` views; `BagDataset` map-style dataset for PyTorch workers
 * `Bag.video()` decodes H.264, H.265, and AV1 from `CompressedVideo` and `FFMPEGPacket` topics
 * `rosbag2_dataset.export` writes scene folders from a spec: jpeg, png, npy, mp4, ref, and table stores, transforms, hooks
+* `SampleRule` and `Window`: one alignment rule with past and future windows for `Bag.synced()` and `BagDataset`; `LiveSampler` applies it to messages as they arrive and gives the samples the recorded bag gives
 * `SceneDataset` reads exported scenes, including `ref` sensors from moved bags (`bag_root`)
 * Scenes are named by bag and first frame time; `--clean` removes scenes a run did not write
 
 ### Bugfixes
+
+* `BagDataset` with `sync` returned the last message for an optional topic beyond tolerance; it is now `None`. Synced samples also carry `'@time'`
 
 ### Refactoring
 

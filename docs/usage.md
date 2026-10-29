@@ -45,8 +45,50 @@ tolerance.
 | `tolerance_ns` | One value, or a mapping from each non-reference topic to its own tolerance |
 | `time_source='header'` | Uses `header.stamp`; decodes each message once while building alignment and supports stamps recorded out of order |
 | `optional` | Topics that keep the row and get index -1 when beyond tolerance |
+| `windows` | Mapping from topics to `Window(every_ns, past, future, tolerance_ns)` (or its keywords); `pairs.windows[topic]` holds one row of indices per group, oldest past first, -1 beyond `tolerance_ns` |
 
 `pairs.times` holds the clock of each chosen message (for -1, the nearest one).
+
+```python
+from rosbag2_dataset import Window
+
+groups = bag.synced(['/camera/image', '/odom'], tolerance_ns=30_000_000,
+                    windows={'/odom': Window(every_ns=500_000_000, past=4, future=8,
+                                             tolerance_ns=30_000_000)})
+history_and_future = groups.windows['/odom'][0]   # 12 indices, -1 where missing
+```
+
+## Live samples
+
+`LiveSampler` applies the same `SampleRule` to messages as they arrive, for
+example in a ROS subscription callback, so inference sees the samples that a
+training dataset reads from the recorded bag.
+
+```python
+from rosbag2_dataset import LiveSampler, SampleRule, Window
+
+rule = SampleRule(['/camera/image', '/odom'], tolerance_ns=30_000_000,
+                  windows={'/odom': Window(every_ns=500_000_000, past=4,
+                                           tolerance_ns=30_000_000)})
+live = LiveSampler(rule)
+
+def on_message(topic, stamp_ns, message, receive_ns):
+    live.add(topic, stamp_ns, message, log_ns=receive_ns)
+    for sample in live.ready(now_ns=receive_ns, max_wait_ns=100_000_000):
+        ...  # same keys as BagDataset with the same sync options
+```
+
+- `add()` takes each topic's messages in clock order; the clock is the one the
+  dataset uses (`time_source`). `log_ns` is what the sample reports as the
+  message time, as the bag's log time is.
+- A reference message becomes a sample once every topic holds a message later
+  than any it could still choose (tolerance and future window). Until then the
+  choice could still change.
+- `ready(now_ns, max_wait_ns)` also releases references older than
+  `max_wait_ns` with the messages held so far. These samples can differ from
+  what the full bag gives.
+- Messages that no pending reference can choose are dropped; memory follows
+  the tolerances and windows, not the run length.
 
 ## Memory behaviour
 
@@ -81,7 +123,9 @@ samples = BagDataset(['/data/run1', '/data/run2'], ['/camera/image', '/imu'],
                      sync={'reference': '/camera/image',
                            'tolerance_ns': 20_000_000},
                      transform=prepare_training_sample)
-# Each input to transform is {topic: (log_time_ns, decoded_message)}.
+# With sync, each input to transform is {'@time': reference clock,
+# topic: (log_time_ns, decoded_message) or None, '<topic>@past': [...],
+# '<topic>@future': [...]}; windows come from sync={'windows': ...}.
 # Pass samples to torch.utils.data.DataLoader with your chosen collate_fn.
 ```
 

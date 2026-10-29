@@ -22,10 +22,11 @@
 
 from .bag import Bag, Synced, Topic, TopicInfo
 from .numpy import image_to_numpy, pointcloud2_to_numpy
+from .sample import LiveSampler, SampleRule, Window
 
 
-__all__ = ['Bag', 'Synced', 'Topic', 'TopicInfo', 'open',
-           'image_to_numpy', 'pointcloud2_to_numpy']
+__all__ = ['Bag', 'LiveSampler', 'SampleRule', 'Synced', 'Topic', 'TopicInfo', 'Window',
+           'open', 'image_to_numpy', 'pointcloud2_to_numpy']
 
 
 def open(path, *, chunk_cache_size=4):  # noqa: A001

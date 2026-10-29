@@ -87,6 +87,19 @@ def test_synced(time_bag):
             bag.synced(['/cam'], reference='/missing')
 
 
+def test_synced_windows(time_bag):
+    with dataset.open(time_bag) as bag:
+        synced = bag.synced(['/cam', '/imu'], tolerance_ns=10,
+                            windows={'/imu': {'every_ns': 100, 'past': 1, 'future': 1,
+                                              'tolerance_ns': 15}})
+        assert list(synced) == [(0, 0), (1, 1), (2, 1)]
+        np.testing.assert_array_equal(synced.windows['/imu'], [[-1, 1], [0, -1], [0, -1]])
+    with BagDataset(time_bag, ['/cam', '/imu'],
+                    sync={'tolerance_ns': 10, 'optional': ['/imu']}) as samples:
+        assert [samples[i]['@time'] for i in range(len(samples))] == [100, 200, 200, 300]
+        assert samples[3]['/imu'] is None
+
+
 def _worker(samples, queue):
     sample = samples[0]
     queue.put((os.getpid(), samples._pid, list(sample), sample['/cam'][0]))
@@ -112,7 +125,7 @@ def test_dataset_workers(time_bag, method):
     worker.join(30)
     assert worker.exitcode == 0
     assert pid == owner and owner != os.getpid()
-    assert names == ['/cam', '/imu'] and stamp == 100
+    assert names == ['@time', '/cam', '/imu'] and stamp == 100
     assert samples._pid == os.getpid()
     assert samples[0]['/cam'][0] == 100
     samples.close()

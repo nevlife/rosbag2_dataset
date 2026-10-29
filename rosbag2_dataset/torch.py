@@ -39,8 +39,11 @@ class BagDataset:
     Return topic-to-(time, message) dictionaries, optionally transformed.
 
     With sync=None, each sample contains one message in merged log-time order.
-    With a sync options dictionary, each sample contains an aligned topic group.
-    Use a transform/collate_fn to convert Message objects into training tensors.
+    With a sync options dictionary (Bag.synced keywords), each sample contains an
+    aligned topic group as LiveSampler builds it: '@time', each topic's (log time,
+    message) or None for an optional topic beyond tolerance, and '<topic>@past' and
+    '<topic>@future' lists for windows. Use a transform/collate_fn to convert
+    Message objects into training tensors.
     """
 
     def __init__(self, paths, topics, sync=None, transform=None):
@@ -64,7 +67,7 @@ class BagDataset:
 
     def _table(self, bag):
         if self.sync is not None:
-            return bag.synced(self.topics, **self.sync).indices
+            return bag.synced(self.topics, **self.sync)
         rows = [(int(time), topic_id, index)
                 for topic_id, name in enumerate(self.topics)
                 for index, time in enumerate(bag.topic(name).times)]
@@ -97,15 +100,13 @@ class BagDataset:
         self._ensure_open()
         bag_id = bisect_right(self._ends, index)
         local = index - (self._ends[bag_id - 1] if bag_id else 0)
-        row = self._tables[bag_id][local]
         bag = self._bags[bag_id]
         if self.sync is None:
-            topic_id, message_id = map(int, row)
+            topic_id, message_id = map(int, self._tables[bag_id][local])
             name = self.topics[topic_id]
             sample = {name: bag.topic(name)[message_id]}
         else:
-            sample = {name: bag.topic(name)[int(message_id)]
-                      for name, message_id in zip(self.topics, row)}
+            sample = _synced_sample(bag, self._tables[bag_id], local)
         return self.transform(sample) if self.transform else sample
 
     def close(self):
@@ -127,6 +128,22 @@ class BagDataset:
 
     def __exit__(self, *args):
         self.close()
+
+
+def _synced_sample(bag, synced, row):
+    def entry(name, index):
+        return bag.topic(name)[int(index)] if index >= 0 else None
+
+    reference = synced.topics.index(synced.reference)
+    sample = {'@time': int(synced.times[row][reference])}
+    for name, index in zip(synced.topics, synced.indices[row]):
+        sample[name] = entry(name, index)
+    for name, slots in synced.windows.items():
+        entries = [entry(name, index) for index in slots[row]]
+        past = synced.window_past[name]
+        sample[name + '@past'] = entries[:past]
+        sample[name + '@future'] = entries[past:]
+    return sample
 
 
 class SceneDataset:
