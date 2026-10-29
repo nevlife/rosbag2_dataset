@@ -166,7 +166,8 @@ class LiveSampler:
         times = self._times[name]
         position = bisect_right(times, clock_ns)
         if name == self.rule.reference and position < self._next:
-            raise ValueError('reference messages must arrive in clock order')
+            raise ValueError(f'reference messages must arrive in clock order: {clock_ns} '
+                             f'is before the sample at {times[self._next - 1]}')
         times.insert(position, int(clock_ns))
         self._items[name].insert(position, (clock_ns if log_ns is None else log_ns, item))
 
@@ -174,10 +175,13 @@ class LiveSampler:
         if now_ns is not None and max_wait_ns is not None and now_ns - ref_time > max_wait_ns:
             return True
         for name in self.rule.topics:
-            if name == self.rule.reference:
+            horizon = self.rule.horizon_ns(name)
+            # The reference message itself is held, so the reference waits only for a
+            # future window of its own.
+            if name == self.rule.reference and not horizon:
                 continue
             times = self._times[name]
-            if not times or times[-1] <= ref_time + self.rule.horizon_ns(name):
+            if not times or times[-1] <= ref_time + horizon:
                 return False
         return True
 

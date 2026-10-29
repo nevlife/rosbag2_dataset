@@ -141,3 +141,20 @@ def test_rule_errors():
     assert len(live.ready()) == 1
     with pytest.raises(ValueError, match='clock order'):
         live.add('/a', 5, None)
+
+
+def test_live_waits_for_reference_future(jitter_bag):
+    windows = {'/cam': Window(every_ns=100 * MS, past=1, future=1, tolerance_ns=30 * MS)}
+    rule = SampleRule(['/cam', '/odom'], tolerance_ns=30 * MS, windows=windows)
+    live = LiveSampler(rule)
+    complete = []
+    with dataset.open(jitter_bag) as bag:
+        for name, log, message in bag.read(['/cam', '/odom']):
+            live.add(name, log, message)
+            complete += live.ready()
+    with BagDataset(jitter_bag, ['/cam', '/odom'],
+                    sync={'tolerance_ns': 30 * MS, 'windows': windows}) as samples:
+        full = [samples[i] for i in range(len(samples))]
+    assert len(complete) >= 50
+    assert [_keys(s) for s in complete] == [_keys(s) for s in full[:len(complete)]]
+    assert all(s['/cam@future'][0] is not None for s in complete)
