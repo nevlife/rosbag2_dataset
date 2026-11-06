@@ -17,6 +17,7 @@ add the same entries to `CHANGELOG.rst`.
 * `Bag.video()` decodes H.264, H.265, and AV1 from `CompressedVideo` and `FFMPEGPacket` topics
 * `rosbag2_dataset.export` writes scene folders from a spec: jpeg, png, npy, mp4, ref, and table stores, transforms, hooks
 * `SampleRule` and `Window`: one alignment rule with past and future windows for `Bag.synced()` and `BagDataset`; `LiveSampler` applies it to messages as they arrive and gives the samples the recorded bag gives
+* `hold` topics of `SampleRule` give their last message before the reference; `LiveSampler.early` counts samples released by the wait
 * `SceneDataset` reads exported scenes, including `ref` sensors from moved bags (`bag_root`)
 * Scenes are named by bag and first frame time; `--clean` removes scenes a run did not write
 

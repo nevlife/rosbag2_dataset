@@ -219,7 +219,7 @@ class Bag:
             yield name, time, message
 
     def synced(self, topics, reference=None, tolerance_ns=0, *, time_source='log',
-               optional=(), windows=None):
+               optional=(), windows=None, hold=()):
         """
         Align nearest times in reference log-time order.
 
@@ -228,7 +228,8 @@ class Bag:
         optional; then its index is -1. windows maps topics to Window options; the
         result's windows hold their indices, -1 beyond the window tolerance.
         """
-        rule = SampleRule(topics, reference, tolerance_ns, optional=optional, windows=windows)
+        rule = SampleRule(topics, reference, tolerance_ns, optional=optional, windows=windows,
+                          hold=hold)
         if time_source not in ('log', 'header'):
             raise ValueError("time_source must be 'log' or 'header'")
         original = {name: self.topic(name).stamps(time_source) for name in rule.topics}

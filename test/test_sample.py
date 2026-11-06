@@ -158,3 +158,36 @@ def test_live_waits_for_reference_future(jitter_bag):
     assert len(complete) >= 50
     assert [_keys(s) for s in complete] == [_keys(s) for s in full[:len(complete)]]
     assert all(s['/cam@future'][0] is not None for s in complete)
+
+
+def test_hold_takes_the_last_message_before_the_reference():
+    rule = SampleRule(['/a', '/goal'], tolerance_ns={'/goal': 100}, hold=['/goal'],
+                      optional=['/goal'])
+    clocks = {'/a': np.array([10, 60, 120, 400]), '/goal': np.array([5, 50, 110])}
+    assert [rule.select(clocks, i)[0][1] for i in range(4)] == [0, 1, 2, -1]
+
+
+def test_hold_does_not_wait_and_matches_a_recording():
+    rule = SampleRule(['/a', '/goal'], tolerance_ns={'/goal': 1000}, hold=['/goal'])
+    live = LiveSampler(rule)
+    live.add('/goal', 5, 'g')
+    live.add('/a', 10, 'a')
+    samples = live.ready()
+    assert samples == [{'@time': 10, '/a': (10, 'a'), '/goal': (5, 'g')}] and live.early == 0
+
+
+def test_early_counts_samples_released_by_the_wait():
+    live = LiveSampler(SampleRule(['/a', '/b'], tolerance_ns=10, optional=['/b']))
+    live.add('/a', 100, 'a')
+    assert live.ready(now_ns=100, max_wait_ns=50) == []
+    assert len(live.ready(now_ns=200, max_wait_ns=50)) == 1
+    assert live.early == 1
+
+
+@pytest.mark.parametrize('options,match', [
+    ({'hold': ['/a']}, 'non-reference'),
+    ({'hold': ['/b'], 'windows': {'/b': {'every_ns': 1}}}, 'no window'),
+])
+def test_hold_errors(options, match):
+    with pytest.raises(ValueError, match=match):
+        SampleRule(['/a', '/b'], **options)

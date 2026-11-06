@@ -64,11 +64,12 @@ class SampleRule:
     Align topics to each reference message; the one rule for bags and live input.
 
     A row is dropped when a topic is beyond tolerance, unless the topic is optional;
-    then its index is -1. Window positions beyond their tolerance are -1.
+    then its index is -1. Window positions beyond their tolerance are -1. A hold topic
+    gives its last message at or before the reference time, no older than its tolerance.
     """
 
     def __init__(self, topics, reference=None, tolerance_ns=0, *, optional=(),
-                 windows=None):
+                 windows=None, hold=()):
         self.topics = tuple(topics)
         if not self.topics or len(set(self.topics)) != len(self.topics):
             raise ValueError('topics must contain distinct topic names')
@@ -78,6 +79,9 @@ class SampleRule:
         self.optional = frozenset(optional)
         if not self.optional <= set(self.topics) - {self.reference}:
             raise ValueError('optional must name non-reference topics')
+        self.hold = frozenset(hold)
+        if not self.hold <= set(self.topics) - {self.reference}:
+            raise ValueError('hold must name non-reference topics')
         self.tolerance_ns = {
             name: int(tolerance_ns[name] if isinstance(tolerance_ns, Mapping) else tolerance_ns)
             for name in self.topics if name != self.reference}
@@ -87,6 +91,17 @@ class SampleRule:
                         for name, window in (windows or {}).items()}
         if not set(self.windows) <= set(self.topics):
             raise ValueError('windows must name topics of the rule')
+        if self.hold & set(self.windows):
+            raise ValueError('a hold topic takes no window')
+
+    def _chosen(self, name, clock, ref_time):
+        """Return the index of the candidate message, or None when the topic has none."""
+        if name not in self.hold:
+            return nearest(clock, ref_time) if len(clock) else None
+        index = int(np.searchsorted(clock, ref_time, side='right')) - 1
+        if index < 0:
+            return None
+        return int(np.searchsorted(clock, clock[index], side='left'))
 
     def horizon_ns(self, name):
         """Return how far past the reference time a message of name can still be chosen."""
@@ -121,8 +136,8 @@ class SampleRule:
                 continue
             clock = clocks[name]
             time = ref_time
-            if len(clock):
-                index = nearest(clock, ref_time)
+            index = self._chosen(name, clock, ref_time)
+            if index is not None:
                 time = int(clock[index])
                 if abs(time - ref_time) <= self.tolerance_ns[name]:
                     indices.append(index)
@@ -152,7 +167,10 @@ class LiveSampler:
     add() takes each topic's messages in clock order. A reference message becomes a
     sample once every topic holds a later message than it could still choose, so the
     choice matches SampleRule over the full recording. ready(now_ns, max_wait_ns)
-    also releases references older than max_wait_ns with the messages held so far.
+    also releases references older than max_wait_ns with the messages held so far, and
+    counts them in early: their choice can differ from the recording's. A hold topic is
+    not waited for, so a message stamped before the reference that arrives after it can
+    also differ.
     """
 
     def __init__(self, rule):
@@ -160,6 +178,7 @@ class LiveSampler:
         self._times = {name: [] for name in rule.topics}
         self._items = {name: [] for name in rule.topics}
         self._next = 0
+        self.early = 0
 
     def add(self, name, clock_ns, item, *, log_ns=None):
         """Hold one message; samples carry (log_ns or clock_ns, item)."""
@@ -171,10 +190,10 @@ class LiveSampler:
         times.insert(position, int(clock_ns))
         self._items[name].insert(position, (clock_ns if log_ns is None else log_ns, item))
 
-    def _final(self, ref_time, now_ns, max_wait_ns):
-        if now_ns is not None and max_wait_ns is not None and now_ns - ref_time > max_wait_ns:
-            return True
+    def _complete(self, ref_time):
         for name in self.rule.topics:
+            if name in self.rule.hold:
+                continue
             horizon = self.rule.horizon_ns(name)
             # The reference message itself is held, so the reference waits only for a
             # future window of its own.
@@ -189,13 +208,18 @@ class LiveSampler:
         """Return the samples that became final, oldest first, and drop unneeded messages."""
         samples = []
         reference = self._times[self.rule.reference]
-        while self._next < len(reference) and self._final(reference[self._next], now_ns,
-                                                          max_wait_ns):
+        while self._next < len(reference):
+            complete = self._complete(reference[self._next])
+            late = (now_ns is not None and max_wait_ns is not None
+                    and now_ns - reference[self._next] > max_wait_ns)
+            if not complete and not late:
+                break
             clocks = {name: np.asarray(times, dtype=np.int64)
                       for name, times in self._times.items()}
             chosen = self.rule.select(clocks, self._next)
             if chosen is not None:
                 samples.append(_sample(self.rule, chosen, self._items))
+                self.early += not complete
             self._next += 1
         if samples or self._next:
             self._prune()
