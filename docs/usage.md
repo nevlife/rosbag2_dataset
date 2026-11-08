@@ -39,14 +39,14 @@ Synchronization returns tuples in the requested topic order, retains reference
 log-time order, permits reuse of matching messages, and drops groups beyond
 tolerance.
 
-| Option | Behaviour |
-| --- | --- |
-| `reference` | Topic that sets the rows; defaults to the first topic |
-| `tolerance_ns` | One value, or a mapping from each non-reference topic to its own tolerance |
-| `time_source='header'` | Uses `header.stamp`; decodes each message once while building alignment and supports stamps recorded out of order |
-| `optional` | Topics that keep the row and get index -1 when beyond tolerance |
-| `hold` | Topics that give their last message at or before the reference time, no older than their tolerance, for an input that arrives rarely |
-| `windows` | Mapping from topics to `Window(every_ns, past, future, tolerance_ns)` (or its keywords); `pairs.windows[topic]` holds one row of indices per group, oldest past first, -1 beyond `tolerance_ns` |
+| Option                 | Behaviour                                                                                                                                                                                       |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `reference`            | Topic that sets the rows; defaults to the first topic                                                                                                                                           |
+| `tolerance_ns`         | One value, or a mapping from each non-reference topic to its own tolerance                                                                                                                      |
+| `time_source='header'` | Uses `header.stamp`; decodes each message once while building alignment and supports stamps recorded out of order                                                                               |
+| `optional`             | Topics that keep the row and get index -1 when beyond tolerance                                                                                                                                 |
+| `hold`                 | Topics that give their last message at or before the reference time, no older than their tolerance, for an input that arrives rarely                                                            |
+| `windows`              | Mapping from topics to `Window(every_ns, past, future, tolerance_ns)` (or its keywords); `pairs.windows[topic]` holds one row of indices per group, oldest past first, -1 beyond `tolerance_ns` |
 
 `pairs.times` holds the clock of each chosen message (for -1, the nearest one).
 

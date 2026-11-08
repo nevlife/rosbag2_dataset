@@ -27,9 +27,9 @@ import numpy as np
 
 from ._cdr import compile_decoder
 from ._mcap import McapFile
-from .numpy import image_to_numpy, pointcloud2_to_numpy
+from .numpy import image_to_numpy
+from .numpy import pointcloud2_to_numpy
 from .video import DECODER_THREADS
-
 
 IMAGE = 'sensor_msgs/msg/Image'
 COMPRESSED_IMAGE = 'sensor_msgs/msg/CompressedImage'
@@ -50,6 +50,7 @@ def image_pixels(message):
 def compressed_pixels(message):
     """Decode a CompressedImage to RGB HxWx3 or HxW pixels."""
     from PIL import Image
+
     with Image.open(io.BytesIO(message.data)) as image:
         return np.asarray(image.convert('RGB') if image.mode not in ('L', 'RGB') else image)
 
@@ -104,6 +105,7 @@ class SceneFiles:
         if store == 'npy':
             return np.load(path)
         from PIL import Image
+
         with Image.open(path) as image:
             pixels = np.asarray(image)
         return pixels.astype(np.uint16) if sensor.get('encoding') in SIXTEEN_BIT else pixels
@@ -122,6 +124,7 @@ class _Video:
 
     def __init__(self, path, video):
         import av
+
         self._container = av.open(str(path))
         self._stream = self._container.streams.video[0]
         self._stream.codec_context.thread_count = DECODER_THREADS
@@ -134,8 +137,9 @@ class _Video:
     def frame(self, index):
         if self._next is None or not self._next <= index < self._next + self._gop:
             seconds = Fraction(index) / self._fps
-            self._container.seek(int(seconds / self._stream.time_base), stream=self._stream,
-                                 backward=True)
+            self._container.seek(
+                int(seconds / self._stream.time_base), stream=self._stream, backward=True
+            )
             self._frames = self._container.decode(self._stream)
         for frame in self._frames:
             position = round(frame.time * self._fps)

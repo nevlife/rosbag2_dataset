@@ -27,14 +27,20 @@ import struct
 
 import numpy as np
 
-
 _PRIMITIVES = {
-    'bool': ('?', '?'), 'byte': ('B', 'u1'), 'char': ('B', 'u1'),
-    'int8': ('b', 'i1'), 'uint8': ('B', 'u1'),
-    'int16': ('h', 'i2'), 'uint16': ('H', 'u2'),
-    'int32': ('i', 'i4'), 'uint32': ('I', 'u4'),
-    'int64': ('q', 'i8'), 'uint64': ('Q', 'u8'),
-    'float32': ('f', 'f4'), 'float64': ('d', 'f8'),
+    'bool': ('?', '?'),
+    'byte': ('B', 'u1'),
+    'char': ('B', 'u1'),
+    'int8': ('b', 'i1'),
+    'uint8': ('B', 'u1'),
+    'int16': ('h', 'i2'),
+    'uint16': ('H', 'u2'),
+    'int32': ('i', 'i4'),
+    'uint32': ('I', 'u4'),
+    'int64': ('q', 'i8'),
+    'uint64': ('Q', 'u8'),
+    'float32': ('f', 'f4'),
+    'float64': ('d', 'f8'),
 }
 _FIELD = re.compile(r'^(\S+)\s+([a-zA-Z_]\w*)((?:[\s=].*)?)$', re.ASCII)
 _TYPE = re.compile(r'^(\w+(?:/\w+)*)(?:<=\d+)?(?:\[(\d*|<=\d+)\])?$')
@@ -48,6 +54,7 @@ class Message:
 
     def to_dict(self):
         """Return plain dictionaries and lists, copying numeric arrays."""
+
         def convert(value):
             if isinstance(value, Message):
                 return value.to_dict()
@@ -70,8 +77,9 @@ def _canonical(name, package=''):
 def _definitions(name, text):
     sections = re.split(r'^={10,}\s*\nMSG:\s*(\S+)\s*\n', text, flags=re.M)
     definitions = {_canonical(name): sections[0]}
-    definitions.update({_canonical(sections[i]): sections[i + 1]
-                        for i in range(1, len(sections), 2)})
+    definitions.update(
+        {_canonical(sections[i]): sections[i + 1] for i in range(1, len(sections), 2)}
+    )
     parsed = {}
     for typename, definition in definitions.items():
         fields = []
@@ -115,11 +123,11 @@ def compile_decoder(name, text):
         for typename, fields in definitions.items():
             ident = ids[typename]
             namespace[f'_cls{ident}'] = type(
-                typename.split('/')[-1], (Message,),
-                {'__slots__': tuple(f[0] for f in fields),
-                 '_fields': tuple(f[0] for f in fields)})
-            lines.extend([f'def _d{ident}(b, p):',
-                          f'    m = _cls{ident}.__new__(_cls{ident})'])
+                typename.split('/')[-1],
+                (Message,),
+                {'__slots__': tuple(f[0] for f in fields), '_fields': tuple(f[0] for f in fields)},
+            )
+            lines.extend([f'def _d{ident}(b, p):', f'    m = _cls{ident}.__new__(_cls{ident})'])
 
             def emit(code, indent=1):
                 lines.append('    ' * indent + code)
@@ -142,8 +150,7 @@ def compile_decoder(name, text):
                     emit('length = _u32(b, p)[0]', indent)
                     emit('p += 4', indent)
                     if base == 'string':
-                        emit(f'{target} = bytes(b[p:p + length - 1]).decode("utf-8")',
-                             indent)
+                        emit(f'{target} = bytes(b[p:p + length - 1]).decode("utf-8")', indent)
                         emit('p += length', indent)
                     else:
                         emit(f'{target} = _wstring(b, p, length, {endian!r})', indent)

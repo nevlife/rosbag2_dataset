@@ -25,7 +25,8 @@ python -m rosbag2_dataset.export spec.yaml bag out [--start-ns T] [--end-ns T] [
 """
 
 import argparse
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
+from dataclasses import replace
 from fractions import Fraction
 import importlib
 import io
@@ -37,11 +38,16 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from ._scene import cloud_points, compressed_pixels, image_pixels
-from ._scene import COMPRESSED_IMAGE, IMAGE, POINT_CLOUD
+from ._scene import cloud_points
+from ._scene import COMPRESSED_IMAGE
+from ._scene import compressed_pixels
+from ._scene import IMAGE
+from ._scene import image_pixels
+from ._scene import POINT_CLOUD
 from .bag import Bag
-from .video import codec_of, CODECS, VIDEO_TYPES
-
+from .video import codec_of
+from .video import CODECS
+from .video import VIDEO_TYPES
 
 FORMAT_VERSION = 1
 STORES = ('jpeg', 'png', 'npy', 'mp4', 'ref', 'table')
@@ -52,8 +58,22 @@ _STORE_TYPES = {
     'npy': {IMAGE, COMPRESSED_IMAGE, POINT_CLOUD, *VIDEO_TYPES},
 }
 _SPEC_KEYS = {'reference', 'scene_frames', 'time', 'sensors', 'tf', 'hooks'}
-_SENSOR_KEYS = {'topic', 'store', 'sync', 'max_ms', 'required', 'time', 'fields', 'finite',
-                'info', 'quality', 'codec', 'crf', 'gop', 'fps'}
+_SENSOR_KEYS = {
+    'topic',
+    'store',
+    'sync',
+    'max_ms',
+    'required',
+    'time',
+    'fields',
+    'finite',
+    'info',
+    'quality',
+    'codec',
+    'crf',
+    'gop',
+    'fps',
+}
 _TF_KEYS = {'base', 'static', 'dynamic'}
 _POSE = pa.list_(pa.float64(), 16)
 
@@ -109,6 +129,7 @@ def load_spec(source):
     """Parse a spec from a YAML path or a mapping."""
     if isinstance(source, (str, Path)):
         import yaml
+
         raw = yaml.safe_load(Path(source).read_text())
     else:
         raw = dict(source)
@@ -121,13 +142,22 @@ def load_spec(source):
         if entry.get('sync', 'nearest') != 'nearest':
             raise ValueError(f"Sensor {name!r}: only sync 'nearest' is supported")
         max_ms = entry.get('max_ms')
-        options = {key: entry[key] for key in ('required', 'finite', 'info', 'quality',
-                                               'codec', 'crf', 'gop', 'fps') if key in entry}
-        sensors.append(Sensor(
-            name, entry['topic'], entry['store'],
-            max_ns=None if max_ms is None else round(max_ms * 1e6),
-            time=_time_source(entry['time']) if 'time' in entry else None,
-            fields=tuple(entry['fields']) if 'fields' in entry else None, **options))
+        options = {
+            key: entry[key]
+            for key in ('required', 'finite', 'info', 'quality', 'codec', 'crf', 'gop', 'fps')
+            if key in entry
+        }
+        sensors.append(
+            Sensor(
+                name,
+                entry['topic'],
+                entry['store'],
+                max_ns=None if max_ms is None else round(max_ms * 1e6),
+                time=_time_source(entry['time']) if 'time' in entry else None,
+                fields=tuple(entry['fields']) if 'fields' in entry else None,
+                **options,
+            )
+        )
     topics = [sensor.topic for sensor in sensors]
     if len(set(topics)) != len(topics):
         raise ValueError('Sensors must use distinct topics')
@@ -145,17 +175,27 @@ def load_spec(source):
     for hook in hooks:
         module, function = hook.split(':')
         resolved.append(getattr(importlib.import_module(module), function))
-    return Spec(reference, int(raw['scene_frames']), _time_source(raw['time']), tuple(sensors),
-                tf.get('base'), bool(tf.get('static', True)) if tf else False,
-                tf.get('dynamic'), tuple(resolved), raw)
+    return Spec(
+        reference,
+        int(raw['scene_frames']),
+        _time_source(raw['time']),
+        tuple(sensors),
+        tf.get('base'),
+        bool(tf.get('static', True)) if tf else False,
+        tf.get('dynamic'),
+        tuple(resolved),
+        raw,
+    )
 
 
 def _matrix(translation, quaternion):
     x, y, z, w = quaternion
     result = np.eye(4)
-    result[:3, :3] = [[1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
-                      [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
-                      [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)]]
+    result[:3, :3] = [
+        [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
+        [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
+        [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)],
+    ]
     result[:3, 3] = translation
     return result
 
@@ -179,8 +219,13 @@ def _transforms(reader, topic):
         for item in message.transforms:
             stamp = item.header.stamp.sec * 1_000_000_000 + item.header.stamp.nanosec
             t, q = item.transform.translation, item.transform.rotation
-            yield (item.child_frame_id, item.header.frame_id, stamp,
-                   (t.x, t.y, t.z), np.array([q.x, q.y, q.z, q.w]))
+            yield (
+                item.child_frame_id,
+                item.header.frame_id,
+                stamp,
+                (t.x, t.y, t.z),
+                np.array([q.x, q.y, q.z, q.w]),
+            )
 
 
 class _Tree:
@@ -200,9 +245,11 @@ class _Tree:
                 return parent, None
             weight = (time - times[index - 1]) / (times[index] - times[index - 1])
             translation = translations[index - 1] + weight * (
-                translations[index] - translations[index - 1])
-            return parent, _matrix(translation, _slerp(quaternions[index - 1],
-                                                       quaternions[index], weight))
+                translations[index] - translations[index - 1]
+            )
+            return parent, _matrix(
+                translation, _slerp(quaternions[index - 1], quaternions[index], weight)
+            )
         return self.static[frame]
 
     def _root(self, frame, time):
@@ -235,8 +282,11 @@ def _offset_stats(offsets):
     if not len(offsets):
         return None
     values = np.abs(offsets) / 1e6
-    return {'p50': float(np.percentile(values, 50)), 'p95': float(np.percentile(values, 95)),
-            'max': float(values.max())}
+    return {
+        'p50': float(np.percentile(values, 50)),
+        'p95': float(np.percentile(values, 95)),
+        'max': float(values.max()),
+    }
 
 
 def _pixels(kind, video, index, message):
@@ -261,8 +311,11 @@ class _FileStore:
     def put(self, number, index, message):
         relative = f'{self.sensor.name}/{number:06d}.{self.extension}'
         path = self.scene_dir / relative
-        if (self.sensor.store == 'jpeg' and self.kind == COMPRESSED_IMAGE
-                and 'jpeg' in message.format):
+        if (
+            self.sensor.store == 'jpeg'
+            and self.kind == COMPRESSED_IMAGE
+            and 'jpeg' in message.format
+        ):
             path.write_bytes(message.data)
             return relative
         if self.kind == POINT_CLOUD:
@@ -273,6 +326,7 @@ class _FileStore:
             np.save(path, array)
         else:
             from PIL import Image
+
             options = {'quality': self.sensor.quality} if self.sensor.store == 'jpeg' else {}
             Image.fromarray(np.ascontiguousarray(array)).save(path, **options)
         return relative
@@ -286,6 +340,7 @@ class _VideoStore:
 
     def __init__(self, sensor, kind, video, scene_dir, fps):
         import av
+
         self.sensor = sensor
         self.kind = kind
         self.video = video
@@ -299,6 +354,7 @@ class _VideoStore:
 
     def put(self, number, index, message):
         import av
+
         pixels = _pixels(self.kind, self.video, index, message)
         if pixels.dtype != np.uint8:
             raise ValueError(f'Sensor {self.sensor.name!r}: mp4 needs 8-bit images')
@@ -321,10 +377,20 @@ class _VideoStore:
         self.container.close()
         if self.stream is None:
             return {}
-        return {'video': {'file': self.file, 'codec': self.codec, 'pix_fmt': 'yuv420p',
-                          'format': self.format, 'fps': self.fps, 'gop': self.sensor.gop,
-                          'crf': self.sensor.crf, 'frames': self.count,
-                          'width': self.stream.width, 'height': self.stream.height}}
+        return {
+            'video': {
+                'file': self.file,
+                'codec': self.codec,
+                'pix_fmt': 'yuv420p',
+                'format': self.format,
+                'fps': self.fps,
+                'gop': self.sensor.gop,
+                'crf': self.sensor.crf,
+                'frames': self.count,
+                'width': self.stream.width,
+                'height': self.stream.height,
+            }
+        }
 
 
 class _RemuxStore:
@@ -342,6 +408,7 @@ class _RemuxStore:
 
     def close(self):
         import av
+
         if self.first is None:
             return {}
         video = self.video
@@ -363,10 +430,19 @@ class _RemuxStore:
                     packet.time_base = rate
                     packet.is_keyframe = keys[number]
                     container.mux(packet)
-        return {'video': {'file': self.path.name, 'codec': video.codec, 'remux': True,
-                          'format': 'rgb24', 'fps': self.fps,
-                          'gop': int(np.diff([*np.flatnonzero(keys), len(keys)]).max()),
-                          'frames': len(packets), 'width': width, 'height': height}}
+        return {
+            'video': {
+                'file': self.path.name,
+                'codec': video.codec,
+                'remux': True,
+                'format': 'rgb24',
+                'fps': self.fps,
+                'gop': int(np.diff([*np.flatnonzero(keys), len(keys)]).max()),
+                'frames': len(packets),
+                'width': width,
+                'height': height,
+            }
+        }
 
 
 class _RefStore:
@@ -400,8 +476,9 @@ class Exporter:
                 raise ValueError(f'Sensor {sensor.name!r}: no messages on {sensor.topic}')
             kind = reader.topics[sensor.topic].type
             if sensor.store in _STORE_TYPES and kind not in _STORE_TYPES[sensor.store]:
-                raise ValueError(f'Sensor {sensor.name!r}: store {sensor.store} '
-                                 f'does not accept {kind}')
+                raise ValueError(
+                    f'Sensor {sensor.name!r}: store {sensor.store} does not accept {kind}'
+                )
         self.frame_sensors = []
         for sensor in spec.sensors:
             if sensor.store == 'table':
@@ -411,17 +488,28 @@ class Exporter:
                 sensor = replace(sensor, fields=tuple(f.name for f in fields if f.count == 1))
             self.frame_sensors.append(sensor)
         self.table_sensors = [s for s in spec.sensors if s.store == 'table']
-        self.videos = {s.name: reader.video(s.topic) for s in self.frame_sensors
-                       if reader.topics[s.topic].type in VIDEO_TYPES and s.store != 'ref'}
-        topics = [spec.reference] + [s.topic for s in self.frame_sensors
-                                     if s.topic != spec.reference]
+        self.videos = {
+            s.name: reader.video(s.topic)
+            for s in self.frame_sensors
+            if reader.topics[s.topic].type in VIDEO_TYPES and s.store != 'ref'
+        }
+        topics = [spec.reference] + [
+            s.topic for s in self.frame_sensors if s.topic != spec.reference
+        ]
         never = np.iinfo(np.int64).max
         self.sync = reader.synced(
-            topics, reference=spec.reference, time_source=spec.time,
-            tolerance_ns={s.topic: never if s.max_ns is None else s.max_ns
-                          for s in self.frame_sensors if s.topic != spec.reference},
-            optional=[s.topic for s in self.frame_sensors
-                      if not s.required and s.topic != spec.reference])
+            topics,
+            reference=spec.reference,
+            time_source=spec.time,
+            tolerance_ns={
+                s.topic: never if s.max_ns is None else s.max_ns
+                for s in self.frame_sensors
+                if s.topic != spec.reference
+            },
+            optional=[
+                s.topic for s in self.frame_sensors if not s.required and s.topic != spec.reference
+            ],
+        )
         self.columns = {topic: i for i, topic in enumerate(topics)}
         reference_times = np.sort(self.sync.times[:, 0])
         steps = np.diff(reference_times)
@@ -439,13 +527,15 @@ class Exporter:
         if spec.dynamic is not None:
             edges = {}
             for child, parent, stamp, translation, quaternion in _transforms(reader, '/tf'):
-                edges.setdefault(child, (parent, []))[1].append(
-                    (stamp, translation, quaternion))
+                edges.setdefault(child, (parent, []))[1].append((stamp, translation, quaternion))
             for child, (parent, samples) in edges.items():
                 samples.sort(key=lambda sample: sample[0])
-                dynamic[child] = (parent, np.array([s[0] for s in samples], dtype=np.int64),
-                                  np.array([s[1] for s in samples]),
-                                  np.array([s[2] for s in samples]))
+                dynamic[child] = (
+                    parent,
+                    np.array([s[0] for s in samples], dtype=np.int64),
+                    np.array([s[1] for s in samples]),
+                    np.array([s[2] for s in samples]),
+                )
         self.static_tree = _Tree(static, {})
         self.tree = _Tree(static, dynamic)
 
@@ -464,7 +554,7 @@ class Exporter:
             keep &= times < end_ns
         rows = np.flatnonzero(keep)
         size = self.spec.scene_frames
-        parts = [rows[i:i + size] for i in range(0, len(rows), size)]
+        parts = [rows[i:][:size] for i in range(0, len(rows), size)]
         for k, part in enumerate(parts):
             start = int(times[parts[k - 1][-1]]) + 1 if k else int(times[part[0]])
             yield part, start, int(times[part[-1]]) + 1
@@ -546,8 +636,13 @@ class Exporter:
                     previous[sensor.name] = (index, value)
                 values[sensor.name].append(value)
             if spec.hooks:
-                frame = {'bag': reader, 'scene_dir': scene_dir, 'frame': number,
-                         'timestamp_ns': int(reference_times[number]), 'messages': messages}
+                frame = {
+                    'bag': reader,
+                    'scene_dir': scene_dir,
+                    'frame': number,
+                    'timestamp_ns': int(reference_times[number]),
+                    'messages': messages,
+                }
                 extra = {}
                 for hook in spec.hooks:
                     extra.update(hook(frame) or {})
@@ -569,30 +664,40 @@ class Exporter:
             columns[name + '_offset_ns'] = pa.array(offsets, pa.int64())
             sensors[name] = self._sensor_meta(sensor, indices[present, column], first_log)
             sensors[name].update(stores[name].close())
-            sensors[name]['stats'] = {'missing': int((~present).sum()),
-                                      'reused': reused[name],
-                                      'offset_ms': _offset_stats(offsets[present])}
+            sensors[name]['stats'] = {
+                'missing': int((~present).sum()),
+                'reused': reused[name],
+                'offset_ms': _offset_stats(offsets[present]),
+            }
         if spec.dynamic is not None:
-            poses = [self.tree.lookup(spec.dynamic, spec.base, int(time))
-                     for time in reference_times]
+            poses = [
+                self.tree.lookup(spec.dynamic, spec.base, int(time)) for time in reference_times
+            ]
             columns['T_world_base'] = pa.array(
-                [None if pose is None else pose.reshape(16).tolist() for pose in poses], _POSE)
+                [None if pose is None else pose.reshape(16).tolist() for pose in poses], _POSE
+            )
         for key in dict.fromkeys(key for extra in extras for key in extra):
             columns[key] = pa.array([extra.get(key) for extra in extras])
         pq.write_table(pa.table(columns), scene_dir / 'frames.parquet')
-        reference = next((s.name for s in spec.sensors if s.topic == spec.reference),
-                         spec.reference)
+        reference = next(
+            (s.name for s in spec.sensors if s.topic == spec.reference), spec.reference
+        )
         return {
-            'format': 'rosbag2_dataset/scene', 'version': FORMAT_VERSION,
+            'format': 'rosbag2_dataset/scene',
+            'version': FORMAT_VERSION,
             'num_frames': len(rows),
             'reference': reference,
             'time': spec.time,
             'rate_hz': self.rate_hz,
-            'source': {'bag': str(self.bag_path), 'dir': str(self.source_dir),
-                       'files': sorted(str(file.path.relative_to(self.source_dir))
-                                       for file in reader._files),
-                       'start_ns': int(reference_times.min()),
-                       'end_ns': int(reference_times.max())},
+            'source': {
+                'bag': str(self.bag_path),
+                'dir': str(self.source_dir),
+                'files': sorted(
+                    str(file.path.relative_to(self.source_dir)) for file in reader._files
+                ),
+                'start_ns': int(reference_times.min()),
+                'end_ns': int(reference_times.max()),
+            },
             'tf': {'base': spec.base, 'static': spec.static, 'world': spec.dynamic},
             'spec': spec.source,
             'sensors': sensors,
@@ -603,9 +708,13 @@ class Exporter:
         topic = reader.topic(sensor.topic)
         kind = reader.topics[sensor.topic].type
         message = topic[int(present[0]) if len(present) else 0][1]
-        meta = {'topic': sensor.topic, 'type': kind, 'store': sensor.store,
-                'max_ms': None if sensor.max_ns is None else sensor.max_ns / 1e6,
-                'required': sensor.required}
+        meta = {
+            'topic': sensor.topic,
+            'type': kind,
+            'store': sensor.store,
+            'max_ms': None if sensor.max_ns is None else sensor.max_ns / 1e6,
+            'required': sensor.required,
+        }
         header = getattr(message, 'header', message)
         if hasattr(header, 'frame_id'):
             meta['frame_id'] = header.frame_id
@@ -627,13 +736,16 @@ class Exporter:
             camera = reader.topic(info)
             calibration = camera[camera.nearest(first_log)][1]
             meta['camera'] = {
-                'topic': info, 'frame_id': calibration.header.frame_id,
-                'width': calibration.width, 'height': calibration.height,
+                'topic': info,
+                'frame_id': calibration.header.frame_id,
+                'width': calibration.width,
+                'height': calibration.height,
                 'distortion_model': calibration.distortion_model,
                 'D': calibration.d.tolist() if len(calibration.d) else [],
                 'K': np.reshape(calibration.k, (3, 3)).tolist(),
                 'R': np.reshape(calibration.r, (3, 3)).tolist(),
-                'P': np.reshape(calibration.p, (3, 4)).tolist()}
+                'P': np.reshape(calibration.p, (3, 4)).tolist(),
+            }
         if self.spec.base is not None and 'frame_id' in meta:
             pose = self.static_tree.lookup(self.spec.base, meta['frame_id'])
             if pose is not None:
@@ -651,16 +763,27 @@ class Exporter:
             row = {'timestamp_ns': int(stamp), 'log_time_ns': log_time}
             _flatten(message.to_dict(), '', row)
             rows.append(row)
-        table = pa.Table.from_pylist(rows) if rows else pa.table(
-            {'timestamp_ns': pa.array([], pa.int64()), 'log_time_ns': pa.array([], pa.int64())})
+        table = (
+            pa.Table.from_pylist(rows)
+            if rows
+            else pa.table(
+                {'timestamp_ns': pa.array([], pa.int64()), 'log_time_ns': pa.array([], pa.int64())}
+            )
+        )
         pq.write_table(table, scene_dir / f'{sensor.name}.parquet')
         gaps = np.diff(stamps)
-        meta = {'topic': sensor.topic, 'type': self.reader.topics[sensor.topic].type,
-                'store': 'table', 'file': f'{sensor.name}.parquet',
-                'time': sensor.time or self.spec.time,
-                'stats': {'count': len(rows),
-                          'max_gap_ms': float(gaps.max() / 1e6) if len(gaps) else None,
-                          'rate_hz': float(1e9 / np.median(gaps)) if len(gaps) else None}}
+        meta = {
+            'topic': sensor.topic,
+            'type': self.reader.topics[sensor.topic].type,
+            'store': 'table',
+            'file': f'{sensor.name}.parquet',
+            'time': sensor.time or self.spec.time,
+            'stats': {
+                'count': len(rows),
+                'max_gap_ms': float(gaps.max() / 1e6) if len(gaps) else None,
+                'rate_hz': float(1e9 / np.median(gaps)) if len(gaps) else None,
+            },
+        }
         return meta
 
 
@@ -684,21 +807,25 @@ def _export(spec, bag, out, start_ns, end_ns, clean):
             yield path
     if clean and root.exists():
         for path in root.iterdir():
-            if path.name not in written and ((path / 'scene.json').exists()
-                                             or path.name.endswith(('.partial', '.previous'))):
+            if path.name not in written and (
+                (path / 'scene.json').exists() or path.name.endswith(('.partial', '.previous'))
+            ):
                 shutil.rmtree(path)
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(prog='python -m rosbag2_dataset.export',
-                                     description='Export a rosbag2 MCAP bag into scenes.')
+    parser = argparse.ArgumentParser(
+        prog='python -m rosbag2_dataset.export',
+        description='Export a rosbag2 MCAP bag into scenes.',
+    )
     parser.add_argument('spec', help='export spec YAML')
     parser.add_argument('bag', help='bag directory or .mcap file')
     parser.add_argument('out', help='output directory; scenes go to out/<bag name>/')
     parser.add_argument('--start-ns', type=int, help='first reference time to export')
     parser.add_argument('--end-ns', type=int, help='reference time to stop before')
-    parser.add_argument('--clean', action='store_true',
-                        help="remove the bag's scenes that this run did not write")
+    parser.add_argument(
+        '--clean', action='store_true', help="remove the bag's scenes that this run did not write"
+    )
     args = parser.parse_args(argv)
     for path in _export(args.spec, args.bag, args.out, args.start_ns, args.end_ns, args.clean):
         print(path, flush=True)

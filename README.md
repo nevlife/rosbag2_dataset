@@ -9,12 +9,12 @@ training code reads back without the bag.
 
 ## Supported environment
 
-| Item | Support |
-| --- | --- |
-| OS | Ubuntu 24.04 |
-| Python | 3.10 or newer, NumPy |
-| ROS 2 | Jazzy for building as a ROS package and for the tests; reading and exporting need no ROS runtime |
-| Bags | rosbag2 MCAP files or split bag directories, `ros2msg` schemas, XCDR1 CDR |
+| Item   | Support                                                                                          |
+| ------ | ------------------------------------------------------------------------------------------------ |
+| OS     | Ubuntu 24.04                                                                                     |
+| Python | 3.10 or newer, NumPy                                                                             |
+| ROS 2  | Jazzy for building as a ROS package and for the tests; reading and exporting need no ROS runtime |
+| Bags   | rosbag2 MCAP files or split bag directories, `ros2msg` schemas, XCDR1 CDR                        |
 
 Optional modules: `lz4` and `zstandard` for compressed chunks, `pyarrow`, `PyYAML`,
 and `Pillow` for export (`.[export]`), PyAV for video (`.[video]`), and PyTorch only
@@ -51,13 +51,13 @@ python -m rosbag2_dataset.export spec.yaml /data/run out
 
 ## Documentation
 
-| Document | Content |
-| --- | --- |
-| [Usage](docs/usage.md) | Reading, time alignment, memory behaviour, NumPy helpers, `BagDataset`, limits |
-| [Video](docs/video.md) | Decoding `CompressedVideo` and `FFMPEGPacket` topics |
-| [Export spec](docs/export-spec.md) | Export CLI, spec keys, stores, transforms, hooks |
-| [Scene format](docs/scene-format.md) | Scene folder layout, columns, references, reruns, `SceneDataset` |
-| [Testing](docs/testing.md) | Tests and the reader benchmark |
+| Document                                          | Content                                                                           |
+| ------------------------------------------------- | --------------------------------------------------------------------------------- |
+| [Usage](docs/usage.md)                            | Reading, time alignment, memory behaviour, NumPy helpers, `BagDataset`, limits    |
+| [Video](docs/video.md)                            | Decoding `CompressedVideo` and `FFMPEGPacket` topics                              |
+| [Export spec](docs/export-spec.md)                | Export CLI, spec keys, stores, transforms, hooks                                  |
+| [Scene format](docs/scene-format.md)              | Scene folder layout, columns, references, reruns, `SceneDataset`                  |
+| [Testing](docs/testing.md)                        | Tests and the reader benchmark                                                    |
 | [Release notes](docs/release-notes/unreleased.md) | Changes since the last release; [CHANGELOG.rst](CHANGELOG.rst) per ROS convention |
 
 The Python API reference is generated from docstrings with

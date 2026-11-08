@@ -20,7 +20,8 @@
 
 """Choose the messages of one sample, from a whole bag or from live messages."""
 
-from bisect import bisect_left, bisect_right
+from bisect import bisect_left
+from bisect import bisect_right
 from collections.abc import Mapping
 from dataclasses import dataclass
 
@@ -50,13 +51,15 @@ class Window:
 
     def __post_init__(self):
         if self.every_ns <= 0 or self.past < 0 or self.future < 0 or self.tolerance_ns < 0:
-            raise ValueError('every_ns must be positive; past, future and tolerance_ns '
-                             'nonnegative')
+            raise ValueError(
+                'every_ns must be positive; past, future and tolerance_ns nonnegative'
+            )
 
     @property
     def offsets(self):
         return [-k * self.every_ns for k in range(self.past, 0, -1)] + [
-            k * self.every_ns for k in range(1, self.future + 1)]
+            k * self.every_ns for k in range(1, self.future + 1)
+        ]
 
 
 class SampleRule:
@@ -68,8 +71,9 @@ class SampleRule:
     gives its last message at or before the reference time, no older than its tolerance.
     """
 
-    def __init__(self, topics, reference=None, tolerance_ns=0, *, optional=(),
-                 windows=None, hold=()):
+    def __init__(
+        self, topics, reference=None, tolerance_ns=0, *, optional=(), windows=None, hold=()
+    ):
         self.topics = tuple(topics)
         if not self.topics or len(set(self.topics)) != len(self.topics):
             raise ValueError('topics must contain distinct topic names')
@@ -84,11 +88,15 @@ class SampleRule:
             raise ValueError('hold must name non-reference topics')
         self.tolerance_ns = {
             name: int(tolerance_ns[name] if isinstance(tolerance_ns, Mapping) else tolerance_ns)
-            for name in self.topics if name != self.reference}
+            for name in self.topics
+            if name != self.reference
+        }
         if any(limit < 0 for limit in self.tolerance_ns.values()):
             raise ValueError('tolerance_ns must be nonnegative')
-        self.windows = {name: window if isinstance(window, Window) else Window(**window)
-                        for name, window in (windows or {}).items()}
+        self.windows = {
+            name: window if isinstance(window, Window) else Window(**window)
+            for name, window in (windows or {}).items()
+        }
         if not set(self.windows) <= set(self.topics):
             raise ValueError('windows must name topics of the rule')
         if self.hold & set(self.windows):
@@ -185,8 +193,10 @@ class LiveSampler:
         times = self._times[name]
         position = bisect_right(times, clock_ns)
         if name == self.rule.reference and position < self._next:
-            raise ValueError(f'reference messages must arrive in clock order: {clock_ns} '
-                             f'is before the sample at {times[self._next - 1]}')
+            raise ValueError(
+                f'reference messages must arrive in clock order: {clock_ns} '
+                f'is before the sample at {times[self._next - 1]}'
+            )
         times.insert(position, int(clock_ns))
         self._items[name].insert(position, (clock_ns if log_ns is None else log_ns, item))
 
@@ -210,12 +220,16 @@ class LiveSampler:
         reference = self._times[self.rule.reference]
         while self._next < len(reference):
             complete = self._complete(reference[self._next])
-            late = (now_ns is not None and max_wait_ns is not None
-                    and now_ns - reference[self._next] > max_wait_ns)
+            late = (
+                now_ns is not None
+                and max_wait_ns is not None
+                and now_ns - reference[self._next] > max_wait_ns
+            )
             if not complete and not late:
                 break
-            clocks = {name: np.asarray(times, dtype=np.int64)
-                      for name, times in self._times.items()}
+            clocks = {
+                name: np.asarray(times, dtype=np.int64) for name, times in self._times.items()
+            }
             chosen = self.rule.select(clocks, self._next)
             if chosen is not None:
                 samples.append(_sample(self.rule, chosen, self._items))
@@ -252,6 +266,7 @@ def _sample(rule, chosen, items):
     for name, positions in windows.items():
         window = rule.windows[name]
         entries = [items[name][int(i)] if i >= 0 else None for i in positions]
-        sample[name + '@past'] = entries[:window.past]
-        sample[name + '@future'] = entries[window.past:]
+        past = window.past
+        sample[name + '@past'] = entries[:past]
+        sample[name + '@future'] = entries[past:]
     return sample

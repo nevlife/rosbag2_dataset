@@ -11,10 +11,10 @@ with rd.open('/data/run') as bag:
 
 ## Supported messages
 
-| Message type | Recorded by | Codec taken from |
-| --- | --- | --- |
-| `foxglove_msgs/msg/CompressedVideo` | `foxglove` image_transport, rosbag2_broll | `format` |
-| `ffmpeg_image_transport_msgs/msg/FFMPEGPacket` | `ffmpeg_image_transport` | first token of `encoding` |
+| Message type                                   | Recorded by                               | Codec taken from          |
+| ---------------------------------------------- | ----------------------------------------- | ------------------------- |
+| `foxglove_msgs/msg/CompressedVideo`            | `foxglove` image_transport, rosbag2_broll | `format`                  |
+| `ffmpeg_image_transport_msgs/msg/FFMPEGPacket` | `ffmpeg_image_transport`                  | first token of `encoding` |
 
 The bag does not need these message packages installed; their definitions come
 from the bag.

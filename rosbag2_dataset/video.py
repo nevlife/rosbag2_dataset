@@ -24,7 +24,6 @@ from collections import deque
 
 import numpy as np
 
-
 COMPRESSED_VIDEO = 'foxglove_msgs/msg/CompressedVideo'
 FFMPEG_PACKET = 'ffmpeg_image_transport_msgs/msg/FFMPEGPacket'
 VIDEO_TYPES = (COMPRESSED_VIDEO, FFMPEG_PACKET)
@@ -37,8 +36,9 @@ DECODER_THREADS = 1
 
 def codec_of(message):
     """Return h264, hevc, or av1 from a CompressedVideo format or FFMPEGPacket encoding."""
-    name = (message.format if hasattr(message, 'format')
-            else message.encoding.split(';')[0]).lower()
+    name = (
+        message.format if hasattr(message, 'format') else message.encoding.split(';')[0]
+    ).lower()
     if 'hevc' in name or '265' in name:
         return 'hevc'
     if '264' in name:
@@ -68,9 +68,10 @@ def _av1_key(data):
         if not header & 2:
             return False
         size = shift = 0
-        for byte in data[position:position + 8]:
+        end = position + 8
+        for byte in data[position:end]:
             position += 1
-            size |= (byte & 0x7f) << shift
+            size |= (byte & 0x7F) << shift
             shift += 7
             if not byte & 0x80:
                 break
@@ -92,9 +93,9 @@ def is_keyframe(message, codec):
         return bool(message.flags & 1)
     data = message.data.tobytes()
     if codec == 'h264':
-        return _annexb_key(data, lambda byte: byte & 0x1f, range(1, 6), (5,))
+        return _annexb_key(data, lambda byte: byte & 0x1F, range(1, 6), (5,))
     if codec == 'hevc':
-        return _annexb_key(data, lambda byte: (byte >> 1) & 0x3f, range(32), range(16, 24))
+        return _annexb_key(data, lambda byte: (byte >> 1) & 0x3F, range(32), range(16, 24))
     return _av1_key(data)
 
 
@@ -137,9 +138,14 @@ class VideoTopic:
     def frame(self, index):
         """Return the av.VideoFrame decoded from a message."""
         import av
+
         index = range(len(self))[index]
-        if (self._context is None or index < self._out
-                or index > self._out and self.keyframe(index) > self._out):
+        if (
+            self._context is None
+            or index < self._out
+            or index > self._out
+            and self.keyframe(index) > self._out
+        ):
             self._context = av.CodecContext.create(CODECS[self.codec][0], 'r')
             self._context.thread_count = DECODER_THREADS
             self._frames.clear()

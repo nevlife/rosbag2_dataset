@@ -27,7 +27,6 @@ import struct
 
 import numpy as np
 
-
 MAGIC = b'\x89MCAP0\r\n'
 _U16 = struct.Struct('<H')
 _U32 = struct.Struct('<I')
@@ -39,7 +38,8 @@ _INDEX_ENTRY = np.dtype([('time', '<u8'), ('offset', '<u8')])
 def _string(buffer, pos):
     size = _U32.unpack_from(buffer, pos)[0]
     pos += 4
-    return bytes(buffer[pos:pos + size]).decode('utf-8'), pos + size
+    end = pos + size
+    return bytes(buffer[pos:end]).decode('utf-8'), end
 
 
 def records(buffer, start=0, end=None):
@@ -103,7 +103,8 @@ class McapFile:
             name, pos = _string(buffer, pos + 2)
             encoding, pos = _string(buffer, pos)
             length = _U32.unpack_from(buffer, pos)[0]
-            text = bytes(buffer[pos + 4:pos + 4 + length]).decode('utf-8')
+            start, end = pos + 4, pos + 4 + length
+            text = bytes(buffer[start:end]).decode('utf-8')
             self.schemas[ident] = Schema(name, encoding, text)
         elif opcode == 4:
             ident, schema_id = struct.unpack_from('<HH', buffer, pos)
@@ -147,13 +148,14 @@ class McapFile:
                     for entry in range(pos + 36, pos + 36 + map_size, 10):
                         channel, index_offset = struct.unpack_from('<HQ', buffer, entry)
                         size = _U32.unpack_from(buffer, index_offset + 11)[0]
-                        pairs = np.frombuffer(buffer, _INDEX_ENTRY, size // 16,
-                                              index_offset + 15)
+                        pairs = np.frombuffer(buffer, _INDEX_ENTRY, size // 16, index_offset + 15)
                         pairs_left -= len(pairs)
                         if pairs_left < 0:
                             raise ValueError(f'Corrupt MCAP file: {self.path} reuses index bytes')
-                        self.entries.extend((channel, int(pair['time']), chunk,
-                                             int(pair['offset'])) for pair in pairs)
+                        self.entries.extend(
+                            (channel, int(pair['time']), chunk, int(pair['offset']))
+                            for pair in pairs
+                        )
         self.used_summary = bool(indexed_chunks)
         # Top-level headers also locate unchunked messages and unindexed chunks.
         for opcode, record, pos, _ in records(buffer, 8, summary_start or len(buffer)):
@@ -174,7 +176,8 @@ class McapFile:
         uncompressed = _U64.unpack_from(self.mapping, offset + 9 + 16)[0]
         compression, pos = _string(self.mapping, offset + 9 + 28)
         size = _U64.unpack_from(self.mapping, pos)[0]
-        data = memoryview(self.mapping)[pos + 8:pos + 8 + size]
+        start, end = pos + 8, pos + 8 + size
+        data = memoryview(self.mapping)[start:end]
         if not compression:
             return data
         if compression == 'lz4':
@@ -203,8 +206,7 @@ class McapFile:
             def decompress():
                 if zstandard.frame_content_size(data) not in (-1, uncompressed):
                     raise zstandard.ZstdError('zstd frame and chunk sizes differ')
-                return zstandard.ZstdDecompressor().decompress(
-                    data, max_output_size=uncompressed)
+                return zstandard.ZstdDecompressor().decompress(data, max_output_size=uncompressed)
         else:
             raise ValueError(f'Unsupported MCAP chunk compression: {compression!r}')
         # Both decompressors allocate the declared size up front; zstd expands 2^15 times at most.
@@ -226,7 +228,8 @@ class McapFile:
             size = _U64.unpack_from(buffer, offset + 1)[0]
         except (struct.error, OverflowError) as error:
             raise ValueError(f'Corrupt MCAP record at {offset} in {self.path}') from error
-        return buffer[offset + 31:offset + 9 + size]
+        start, end = offset + 31, offset + 9 + size
+        return buffer[start:end]
 
     def close(self):
         """Release owned buffers; exported views keep their mapping alive."""

@@ -26,7 +26,8 @@ import types
 import numpy as np
 import pytest
 import rosbag2_dataset as dataset
-from rosbag2_dataset._mcap import MAGIC, McapFile
+from rosbag2_dataset._mcap import MAGIC
+from rosbag2_dataset._mcap import McapFile
 from rosbag2_dataset.video import is_keyframe
 
 
@@ -44,8 +45,13 @@ def schema(ident=1, name='demo/msg/One', text='uint8 value'):
 
 
 def channel(ident=1, schema_id=1, topic='/one'):
-    return record(4, struct.pack('<HH', ident, schema_id) + string(topic) + string('cdr')
-                  + struct.pack('<I', 0))
+    return record(
+        4,
+        struct.pack('<HH', ident, schema_id)
+        + string(topic)
+        + string('cdr')
+        + struct.pack('<I', 0),
+    )
 
 
 def message(channel_id=1, time=10, payload=b'\x00\x01\x00\x00\x07'):
@@ -64,16 +70,26 @@ def write(tmp_path, data):
 
 def chunk_index(index_offset, count=1):
     entries = struct.pack('<HQ', 1, index_offset) * count
-    return record(8, struct.pack('<QQQQI', 0, 0, 8, 0, len(entries)) + entries
-                  + struct.pack('<Q', 0) + string('') + struct.pack('<QQ', 0, 0))
+    return record(
+        8,
+        struct.pack('<QQQQI', 0, 0, 8, 0, len(entries))
+        + entries
+        + struct.pack('<Q', 0)
+        + string('')
+        + struct.pack('<QQ', 0, 0),
+    )
 
 
-@pytest.mark.parametrize('data', [
-    footer(1000),
-    record(3, struct.pack('<HI', 1, 1000)),
-    chunk_index(1 << 40) + footer(8),
-    chunk_index(1 << 63) + footer(8),
-], ids=['summary', 'schema', 'message_index', 'message_index_u64'])
+@pytest.mark.parametrize(
+    'data',
+    [
+        footer(1000),
+        record(3, struct.pack('<HI', 1, 1000)),
+        chunk_index(1 << 40) + footer(8),
+        chunk_index(1 << 63) + footer(8),
+    ],
+    ids=['summary', 'schema', 'message_index', 'message_index_u64'],
+)
 def test_offsets_beyond_file(tmp_path, data):
     with pytest.raises(ValueError, match='Corrupt MCAP'):
         dataset.open(write(tmp_path, data))
@@ -94,8 +110,13 @@ def test_raw_offset_beyond_file(tmp_path):
 
 
 def chunk(compression, frame, size):
-    return record(6, struct.pack('<QQQI', 0, 0, size, 0) + string(compression)
-                  + struct.pack('<Q', len(frame)) + frame)
+    return record(
+        6,
+        struct.pack('<QQQI', 0, 0, size, 0)
+        + string(compression)
+        + struct.pack('<Q', len(frame))
+        + frame,
+    )
 
 
 def compress(compression, data, **options):
@@ -112,8 +133,10 @@ def test_corrupt_compressed_chunk(tmp_path, compression):
             dataset.open(write(tmp_path, chunk(compression, frame, len(data))))
 
 
-@pytest.mark.parametrize('compression, options', [
-    ('lz4', {'store_size': False}), ('zstd', {'write_content_size': False})])
+@pytest.mark.parametrize(
+    'compression, options',
+    [('lz4', {'store_size': False}), ('zstd', {'write_content_size': False})],
+)
 def test_chunk_without_content_size(tmp_path, compression, options):
     data = schema() + channel() + message()
     frame = compress(compression, data, **options)
@@ -148,8 +171,9 @@ def test_time_beyond_int64(tmp_path):
         dataset.open(write(tmp_path, schema() + channel() + message(time=1 << 63)))
 
 
-@pytest.mark.parametrize('data', [b'\x12', b'\x12\x80', b'\x16'],
-                         ids=['size', 'leb128', 'extension'])
+@pytest.mark.parametrize(
+    'data', [b'\x12', b'\x12\x80', b'\x16'], ids=['size', 'leb128', 'extension']
+)
 def test_truncated_av1_packet(data):
     packet = types.SimpleNamespace(format='av1', data=np.frombuffer(data, np.uint8))
     assert is_keyframe(packet, 'av1') is False

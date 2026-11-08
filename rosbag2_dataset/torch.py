@@ -68,12 +68,15 @@ class BagDataset:
     def _table(self, bag):
         if self.sync is not None:
             return bag.synced(self.topics, **self.sync)
-        rows = [(int(time), topic_id, index)
-                for topic_id, name in enumerate(self.topics)
-                for index, time in enumerate(bag.topic(name).times)]
+        rows = [
+            (int(time), topic_id, index)
+            for topic_id, name in enumerate(self.topics)
+            for index, time in enumerate(bag.topic(name).times)
+        ]
         rows.sort()
-        return np.array([(topic, index) for _, topic, index in rows],
-                        dtype=np.int64).reshape(-1, 2)
+        return np.array([(topic, index) for _, topic, index in rows], dtype=np.int64).reshape(
+            -1, 2
+        )
 
     def _ensure_open(self):
         if self._pid != os.getpid() or self._bags is None:
@@ -164,14 +167,20 @@ class SceneDataset:
 
     def __init__(self, roots, sensors=None, transform=None, bag_root=None):
         import pyarrow.parquet as pq
+
         roots = [roots] if isinstance(roots, (str, Path)) else roots
         paths = []
         for root in map(Path, roots):
             if (root / 'scene.json').exists():
                 paths.append(root.resolve())
             else:
-                paths.extend(sorted(path.parent.resolve() for path in root.glob('**/scene.json')
-                                    if not path.parent.name.startswith('.')))
+                paths.extend(
+                    sorted(
+                        path.parent.resolve()
+                        for path in root.glob('**/scene.json')
+                        if not path.parent.name.startswith('.')
+                    )
+                )
         self.scenes = []
         self._frames = []
         self._ends = []
@@ -203,6 +212,7 @@ class SceneDataset:
 
     def _table(self, scene, sensor):
         import pyarrow.parquet as pq
+
         key = (scene['path'], sensor['name'])
         if key not in self._tables:
             self._tables[key] = pq.read_table(scene['path'] / sensor['file'])
@@ -236,8 +246,10 @@ class SceneDataset:
                 low = np.searchsorted(stamps, times[frame - 1], side='right') if frame else 0
                 high = np.searchsorted(stamps, times[frame], side='right')
                 window = table.slice(low, max(0, high - low))
-                sample[name] = {column: window.column(column).to_numpy(zero_copy_only=False)
-                                for column in window.column_names}
+                sample[name] = {
+                    column: window.column(column).to_numpy(zero_copy_only=False)
+                    for column in window.column_names
+                }
             elif row[name + '_file' if sensor['store'] == 'ref' else name] is None:
                 sample[name] = None
             else:

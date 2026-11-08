@@ -10,23 +10,23 @@
 
 <!-- One line per change. Link an issue as [#N](https://github.com/nevlife/rosbag2_dataset/issues/N) when there is one. -->
 
-* Example text
+- Example text
 
 ### Bugfixes
 
-* Example text
+- Example text
 
 ### Refactoring
 
-* Example text
+- Example text
 
 ### Workflow
 
-* Example text
+- Example text
 
 ### New API features
 
-* Example text
+- Example text
 
 ### API Breaking Changes
 

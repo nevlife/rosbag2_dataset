@@ -27,7 +27,8 @@ import atheris
 import numpy as np
 
 with atheris.instrument_imports(include=['rosbag2_dataset']):
-    from rosbag2_dataset.video import codec_of, is_keyframe
+    from rosbag2_dataset.video import codec_of
+    from rosbag2_dataset.video import is_keyframe
 
 # Contract: is_keyframe returns a bool for any packet; codec_of raises only ValueError.
 
@@ -37,8 +38,10 @@ def test_one_input(data):
         return
     packet = np.frombuffer(data, np.uint8, offset=1)
     name = data[1:17].decode('latin-1')
-    for message in (types.SimpleNamespace(format=name, data=packet),
-                    types.SimpleNamespace(encoding=name, flags=data[0], data=packet)):
+    for message in (
+        types.SimpleNamespace(format=name, data=packet),
+        types.SimpleNamespace(encoding=name, flags=data[0], data=packet),
+    ):
         try:
             codec_of(message)
         except ValueError:

@@ -22,15 +22,17 @@
 
 import numpy as np
 
-
 _ENCODINGS = {
-    'rgb8': ('u1', 3), 'bgr8': ('u1', 3),
-    'rgba8': ('u1', 4), 'bgra8': ('u1', 4),
-    'mono8': ('u1', 1), 'mono16': ('u2', 1),
-    '16UC1': ('u2', 1), '32FC1': ('f4', 1),
+    'rgb8': ('u1', 3),
+    'bgr8': ('u1', 3),
+    'rgba8': ('u1', 4),
+    'bgra8': ('u1', 4),
+    'mono8': ('u1', 1),
+    'mono16': ('u2', 1),
+    '16UC1': ('u2', 1),
+    '32FC1': ('f4', 1),
 }
-_POINT_TYPES = {1: 'i1', 2: 'u1', 3: 'i2', 4: 'u2',
-                5: 'i4', 6: 'u4', 7: 'f4', 8: 'f8'}
+_POINT_TYPES = {1: 'i1', 2: 'u1', 3: 'i2', 4: 'u2', 5: 'i4', 6: 'u4', 7: 'f4', 8: 'f8'}
 
 
 def image_to_numpy(message):
@@ -63,11 +65,16 @@ def pointcloud2_to_numpy(message):
         names.append(field.name)
         formats.append(dtype if field.count == 1 else (dtype, (field.count,)))
         offsets.append(field.offset)
-    dtype = np.dtype({'names': names, 'formats': formats, 'offsets': offsets,
-                      'itemsize': message.point_step})
+    dtype = np.dtype(
+        {'names': names, 'formats': formats, 'offsets': offsets, 'itemsize': message.point_step}
+    )
     if message.row_step < message.width * message.point_step:
         raise ValueError('PointCloud2 row_step is smaller than its packed row size')
-    result = np.ndarray((message.height, message.width), dtype=dtype,
-                        buffer=message.data, strides=(message.row_step, message.point_step))
+    result = np.ndarray(
+        (message.height, message.width),
+        dtype=dtype,
+        buffer=message.data,
+        strides=(message.row_step, message.point_step),
+    )
     result.flags.writeable = False
     return result

@@ -27,11 +27,13 @@ import struct
 import subprocess
 import sys
 
-from conftest import make_cloud, make_image
+from conftest import make_cloud
+from conftest import make_image
 import numpy as np
 import pytest
 import rosbag2_dataset as dataset
-from rosbag2_dataset._mcap import McapFile, records
+from rosbag2_dataset._mcap import McapFile
+from rosbag2_dataset._mcap import records
 
 
 def compare(actual, expected):
@@ -51,10 +53,20 @@ def compare(actual, expected):
         assert actual == expected
 
 
-@pytest.mark.parametrize('options', ['', 'noChunking: true\n', 'noMessageIndex: true\n',
-                                     'noSummary: true\n', 'compression: Lz4\n'])
+@pytest.mark.parametrize(
+    'options',
+    [
+        '',
+        'noChunking: true\n',
+        'noMessageIndex: true\n',
+        'noSummary: true\n',
+        'compression: Lz4\n',
+    ],
+)
 def test_every_field(write_bag, reference_events, options):
-    from rclpy.serialization import deserialize_message, serialize_message
+    from rclpy.serialization import deserialize_message
+    from rclpy.serialization import serialize_message
+
     path = write_bag(reference_events, options=options)
     with dataset.open(path) as bag:
         actual = list(bag.read())
@@ -111,8 +123,9 @@ def test_split_bag(write_bag):
         assert [time for _, time, _ in bag.read()] == list(range(0, 1600, 100))
 
 
-@pytest.mark.parametrize('encoding', ['rgb8', 'bgr8', 'rgba8', 'bgra8', 'mono8',
-                                      'mono16', '16UC1', '32FC1'])
+@pytest.mark.parametrize(
+    'encoding', ['rgb8', 'bgr8', 'rgba8', 'bgra8', 'mono8', 'mono16', '16UC1', '32FC1']
+)
 @pytest.mark.parametrize('bigendian', [False, True])
 def test_image_view(write_bag, encoding, bigendian):
     message, expected = make_image(encoding, bigendian)
@@ -161,8 +174,10 @@ def test_cloud_view(write_bag, bigendian):
 def test_lz4_cache(write_bag, monkeypatch):
     frame = pytest.importorskip('lz4.frame')
     images = [make_image(width=65, height=64)[0] for _ in range(3)]
-    path = write_bag([('/image', i, msg) for i, msg in enumerate(images)],
-                     options='compression: Lz4\nforceCompression: true\n')
+    path = write_bag(
+        [('/image', i, msg) for i, msg in enumerate(images)],
+        options='compression: Lz4\nforceCompression: true\n',
+    )
     calls = []
     original = frame.decompress
 
@@ -187,6 +202,7 @@ def test_lz4_cache(write_bag, monkeypatch):
 
 def test_missing_compression_modules(write_bag, monkeypatch):
     from std_msgs.msg import String
+
     original = builtins.__import__
 
     def without_compression(name, *args, **kwargs):
@@ -195,8 +211,10 @@ def test_missing_compression_modules(write_bag, monkeypatch):
         return original(name, *args, **kwargs)
 
     for compression, module in [('Zstd', 'zstandard'), ('Lz4', 'lz4')]:
-        path = write_bag([('/text', 0, String(data='a' * 10000))],
-                         options=f'compression: {compression}\nforceCompression: true\n')
+        path = write_bag(
+            [('/text', 0, String(data='a' * 10000))],
+            options=f'compression: {compression}\nforceCompression: true\n',
+        )
         with dataset.open(path) as bag:
             with monkeypatch.context() as context:
                 context.setattr(builtins, '__import__', without_compression)
@@ -232,8 +250,9 @@ def test_ancillary_records_and_mixed_messages(write_bag, reference_events):
     data_end = next(record for op, record, _, _ in records(original, 8) if op == 15)
     raw = b'\x00\x01\x00\x00' + struct.pack('<I', 4) + b'end\x00'
     with dataset.open(path) as bag:
-        channel = next(key for key, value in bag._files[0].channels.items()
-                       if value.topic == '/text')
+        channel = next(
+            key for key, value in bag._files[0].channels.items() if value.topic == '/text'
+        )
     message = struct.pack('<HIQQ', channel, 0, 999999999, 999999999) + raw
 
     def record(op, payload):

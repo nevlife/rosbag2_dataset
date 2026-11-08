@@ -35,13 +35,11 @@ MESSAGES = 16
 
 
 class _Buffer(bytes):
-
     def close(self):
         pass
 
 
 class _Source:
-
     def open(self, mode):  # noqa: A003
         return self
 

@@ -18,8 +18,8 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 # THE SOFTWARE.
 
-from setuptools import find_packages, setup
-
+from setuptools import find_packages
+from setuptools import setup
 
 package_name = 'rosbag2_dataset'
 
@@ -30,12 +30,19 @@ setup(
     data_files=[
         ('share/ament_index/resource_index/packages', ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml', 'README.md', 'LICENSE']),
-        ('share/' + package_name + '/benchmark',
-         ['benchmark/bench_read.py', 'benchmark/RESULTS.md']),
+        (
+            'share/' + package_name + '/benchmark',
+            ['benchmark/bench_read.py', 'benchmark/RESULTS.md'],
+        ),
     ],
     install_requires=['setuptools', 'numpy'],
-    extras_require={'lz4': ['lz4'], 'zstd': ['zstandard'], 'torch': ['torch'],
-                    'export': ['pyarrow', 'pyyaml', 'pillow'], 'video': ['av']},
+    extras_require={
+        'lz4': ['lz4'],
+        'zstd': ['zstandard'],
+        'torch': ['torch'],
+        'export': ['pyarrow', 'pyyaml', 'pillow'],
+        'video': ['av'],
+    },
     python_requires='>=3.10',
     zip_safe=False,
     maintainer='nevlife',

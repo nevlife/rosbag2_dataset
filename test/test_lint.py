@@ -29,6 +29,7 @@ import pytest
 @pytest.mark.flake8
 def test_flake8():
     from ament_flake8.main import main_with_errors
+
     code, errors = main_with_errors(argv=[str(Path(__file__).parents[1])])
     assert code == 0, '\n'.join(errors)
 
@@ -37,6 +38,7 @@ def test_flake8():
 @pytest.mark.pep257
 def test_pep257():
     from ament_pep257.main import main
+
     assert main(argv=[str(Path(__file__).parents[1])]) == 0
 
 
@@ -44,4 +46,5 @@ def test_pep257():
 @pytest.mark.copyright
 def test_copyright():
     from ament_copyright.main import main
+
     assert main(argv=[str(Path(__file__).parents[1])]) == 0

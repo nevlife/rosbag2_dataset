@@ -32,7 +32,9 @@ from rosbag2_dataset.torch import BagDataset
 
 @pytest.fixture
 def time_bag(write_bag):
-    from sensor_msgs.msg import Image, Imu
+    from sensor_msgs.msg import Image
+    from sensor_msgs.msg import Imu
+
     events = []
     for i, time in enumerate([300, 100, 200, 200]):
         image = Image(height=1, width=1, step=1, encoding='mono8', data=bytes([i]))
@@ -55,8 +57,7 @@ def test_index_and_reads(time_bag):
         for index, expected in [(0, 1), (3, 0), (-1, 0), (1, 2), (2, 3)]:
             assert topic[index][1].data[0] == expected
             assert topic.raw(index)[0] == int(topic.times[index])
-        for time, expected in [(0, 0), (100, 0), (150, 0), (199, 1), (200, 1),
-                               (299, 3), (999, 3)]:
+        for time, expected in [(0, 0), (100, 0), (150, 0), (199, 1), (200, 1), (299, 3), (999, 3)]:
             assert topic.nearest(time) == expected
         assert [time for _, time, _ in bag.read()] == [90, 100, 200, 200, 210, 300, 400]
         assert [time for _, time, _ in bag.read(['/cam'], 100, 300)] == [100, 200, 200]
@@ -78,9 +79,12 @@ def test_synced(time_bag):
         assert pairs[:2] == [(0, 0), (1, 1)]
         assert not pairs.indices.flags.writeable
         assert list(bag.synced(['/cam', '/imu'], reference='/imu', tolerance_ns=10)) == [
-            (0, 0), (1, 1)]
-        header = bag.synced(['/cam', '/imu'], reference='/cam', tolerance_ns=100,
-                            time_source='header')
+            (0, 0),
+            (1, 1),
+        ]
+        header = bag.synced(
+            ['/cam', '/imu'], reference='/cam', tolerance_ns=100, time_source='header'
+        )
         assert list(header) == [(0, 1), (1, 2), (2, 2), (3, 0)]
         assert list(bag.synced(['/cam', '/imu'], tolerance_ns=0)) == []
         with pytest.raises(ValueError, match='reference'):
@@ -89,13 +93,16 @@ def test_synced(time_bag):
 
 def test_synced_windows(time_bag):
     with dataset.open(time_bag) as bag:
-        synced = bag.synced(['/cam', '/imu'], tolerance_ns=10,
-                            windows={'/imu': {'every_ns': 100, 'past': 1, 'future': 1,
-                                              'tolerance_ns': 15}})
+        synced = bag.synced(
+            ['/cam', '/imu'],
+            tolerance_ns=10,
+            windows={'/imu': {'every_ns': 100, 'past': 1, 'future': 1, 'tolerance_ns': 15}},
+        )
         assert list(synced) == [(0, 0), (1, 1), (2, 1)]
         np.testing.assert_array_equal(synced.windows['/imu'], [[-1, 1], [0, -1], [0, -1]])
-    with BagDataset(time_bag, ['/cam', '/imu'],
-                    sync={'tolerance_ns': 10, 'optional': ['/imu']}) as samples:
+    with BagDataset(
+        time_bag, ['/cam', '/imu'], sync={'tolerance_ns': 10, 'optional': ['/imu']}
+    ) as samples:
         assert [samples[i]['@time'] for i in range(len(samples))] == [100, 200, 200, 300]
         assert samples[3]['/imu'] is None
 
@@ -108,8 +115,9 @@ def _worker(samples, queue):
 
 @pytest.mark.parametrize('method', ['fork', 'spawn'])
 def test_dataset_workers(time_bag, method):
-    samples = BagDataset([time_bag, time_bag], ['/cam', '/imu'],
-                         sync={'reference': '/cam', 'tolerance_ns': 10})
+    samples = BagDataset(
+        [time_bag, time_bag], ['/cam', '/imu'], sync={'reference': '/cam', 'tolerance_ns': 10}
+    )
     assert len(samples) == 6
     assert samples[0]['/cam'][0] == 100
     assert samples[3]['/cam'][0] == 100
@@ -134,8 +142,9 @@ def test_dataset_workers(time_bag, method):
 
 
 def test_dataset_unsynced_and_transform(time_bag):
-    with BagDataset(time_bag, ['/cam', '/imu'],
-                    transform=lambda sample: next(iter(sample.values()))[0]) as samples:
+    with BagDataset(
+        time_bag, ['/cam', '/imu'], transform=lambda sample: next(iter(sample.values()))[0]
+    ) as samples:
         assert len(samples) == 7
         assert [samples[i] for i in range(len(samples))] == [90, 100, 200, 200, 210, 300, 400]
         with pytest.raises(IndexError):
@@ -147,8 +156,10 @@ def test_dataset_unsynced_and_transform(time_bag):
 def test_empty_bag_and_empty_topic(write_bag):
     from sensor_msgs.msg import Image
     from std_msgs.msg import String
+
     path = write_bag([('/cam', 1, Image()), ('/text', 2, String())])
     from rosbag2_dataset._mcap import records
+
     source = next(path.glob('*.mcap')).read_bytes()
     empty = path.parent / 'empty.mcap'
     headers = [source[:8]]

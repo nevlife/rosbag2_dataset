@@ -29,7 +29,8 @@ import numpy as np
 
 from ._cdr import compile_decoder
 from ._mcap import McapFile
-from .sample import nearest, SampleRule
+from .sample import nearest
+from .sample import SampleRule
 from .video import VideoTopic
 
 
@@ -123,8 +124,7 @@ class Synced:
     clock if that topic is empty.
     """
 
-    def __init__(self, topics, indices, times, windows=None, *, reference=None,
-                 window_past=None):
+    def __init__(self, topics, indices, times, windows=None, *, reference=None, window_past=None):
         self.topics = tuple(topics)
         self.reference = self.topics[0] if reference is None else reference
         self.window_past = dict(window_past or {})
@@ -177,13 +177,18 @@ class Bag:
                     channel = file.channels[channel_id]
                     entries[channel.topic].append((time, file_id, channel_id, chunk, offset))
                 file.entries.clear()
-            self._topics = {name: Topic(self, name, types[name], rows)
-                            for name, rows in entries.items()}
+            self._topics = {
+                name: Topic(self, name, types[name], rows) for name, rows in entries.items()
+            }
             self.topics = {
-                name: TopicInfo(topic.type, len(topic),
-                                int(topic.times[0]) if len(topic) else None,
-                                int(topic.times[-1]) if len(topic) else None)
-                for name, topic in self._topics.items()}
+                name: TopicInfo(
+                    topic.type,
+                    len(topic),
+                    int(topic.times[0]) if len(topic) else None,
+                    int(topic.times[-1]) if len(topic) else None,
+                )
+                for name, topic in self._topics.items()
+            }
         except BaseException:
             self.close()
             raise
@@ -206,8 +211,10 @@ class Bag:
         self._check_open()
         if isinstance(topics, str):
             topics = [topics]
-        selected = [self.topic(name) for name in
-                    (self._topics if topics is None else dict.fromkeys(topics))]
+        selected = [
+            self.topic(name)
+            for name in (self._topics if topics is None else dict.fromkeys(topics))
+        ]
 
         def times(topic):
             start = 0 if start_ns is None else int(np.searchsorted(topic.times, start_ns))
@@ -218,8 +225,17 @@ class Bag:
             time, message = self._topics[name][index]
             yield name, time, message
 
-    def synced(self, topics, reference=None, tolerance_ns=0, *, time_source='log',
-               optional=(), windows=None, hold=()):
+    def synced(
+        self,
+        topics,
+        reference=None,
+        tolerance_ns=0,
+        *,
+        time_source='log',
+        optional=(),
+        windows=None,
+        hold=(),
+    ):
         """
         Align nearest times in reference log-time order.
 
@@ -228,8 +244,9 @@ class Bag:
         optional; then its index is -1. windows maps topics to Window options; the
         result's windows hold their indices, -1 beyond the window tolerance.
         """
-        rule = SampleRule(topics, reference, tolerance_ns, optional=optional, windows=windows,
-                          hold=hold)
+        rule = SampleRule(
+            topics, reference, tolerance_ns, optional=optional, windows=windows, hold=hold
+        )
         if time_source not in ('log', 'header'):
             raise ValueError("time_source must be 'log' or 'header'")
         original = {name: self.topic(name).stamps(time_source) for name in rule.topics}
@@ -244,13 +261,23 @@ class Bag:
             if chosen is None:
                 continue
             indices, row_times, chosen_windows = chosen
-            rows.append([int(orders[name][index]) if index >= 0 else -1
-                         for name, index in zip(rule.topics, indices)])
+            rows.append(
+                [
+                    int(orders[name][index]) if index >= 0 else -1
+                    for name, index in zip(rule.topics, indices)
+                ]
+            )
             times.append(row_times)
             for name, slots in chosen_windows.items():
                 window_rows[name].append(np.where(slots >= 0, orders[name][slots], -1))
-        return Synced(rule.topics, rows, times, window_rows, reference=rule.reference,
-                      window_past={name: w.past for name, w in rule.windows.items()})
+        return Synced(
+            rule.topics,
+            rows,
+            times,
+            window_rows,
+            reference=rule.reference,
+            window_past={name: w.past for name, w in rule.windows.items()},
+        )
 
     def close(self):
         """Close the bag; previously exported arrays remain valid."""

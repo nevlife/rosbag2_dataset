@@ -28,7 +28,6 @@ from rosbag2_dataset._cdr import compile_decoder
 
 
 class CdrBuilder:
-
     def __init__(self, endian):
         self.endian = endian
         self.data = bytearray()
@@ -82,9 +81,21 @@ string name
 int32[] values
 """
     builder = CdrBuilder(endian)
-    fields = [('?', True), ('B', 254), ('B', 200), ('b', -128), ('B', 255),
-              ('h', -32000), ('H', 65000), ('i', -1234567), ('I', 3456789),
-              ('q', -1234567890123), ('Q', 1234567890123456), ('f', 1.25), ('d', -9.5)]
+    fields = [
+        ('?', True),
+        ('B', 254),
+        ('B', 200),
+        ('b', -128),
+        ('B', 255),
+        ('h', -32000),
+        ('H', 65000),
+        ('i', -1234567),
+        ('I', 3456789),
+        ('q', -1234567890123),
+        ('Q', 1234567890123456),
+        ('f', 1.25),
+        ('d', -9.5),
+    ]
     for fmt, value in fields:
         builder.put(fmt, value)
     builder.string('héllo')
@@ -122,7 +133,9 @@ int32[] values
     assert not message.fixed.flags.writeable
     assert message.fixed.base.obj is payload
     assert message.to_dict()['children'] == [
-        {'name': 'first', 'values': [1, -2]}, {'name': 'second', 'values': []}]
+        {'name': 'first', 'values': [1, -2]},
+        {'name': 'second', 'values': []},
+    ]
 
 
 @pytest.mark.parametrize('endian', ['<', '>'])
@@ -147,18 +160,23 @@ def test_reject_unsupported_serialization():
         compile_decoder('demo/One', 'uint8[broken] value')
 
 
-@pytest.mark.parametrize('schema, data', [
-    ('uint64 value', b'\x01\x02'),
-    ('string text', b'\x0a\x00\x00\x00ab'),
-    ('byte flag\nstring text', b'\x01'),
-], ids=['scalar', 'string', 'length'])
+@pytest.mark.parametrize(
+    'schema, data',
+    [
+        ('uint64 value', b'\x01\x02'),
+        ('string text', b'\x0a\x00\x00\x00ab'),
+        ('byte flag\nstring text', b'\x01'),
+    ],
+    ids=['scalar', 'string', 'length'],
+)
 def test_truncated_payload(schema, data):
     with pytest.raises(ValueError, match='Truncated CDR'):
         compile_decoder('demo/Short', schema)(b'\x00\x01\x00\x00' + data)
 
 
-@pytest.mark.parametrize('schema', ['Flag[] flags', 'Flag[4294967295] flags'],
-                         ids=['sequence', 'array'])
+@pytest.mark.parametrize(
+    'schema', ['Flag[] flags', 'Flag[4294967295] flags'], ids=['sequence', 'array']
+)
 def test_sequence_length_beyond_payload(schema):
     text = schema + '\n' + '=' * 80 + '\nMSG: demo/Flag\nbyte flag\n'
     decoder = compile_decoder('demo/Flags', text)
@@ -185,10 +203,13 @@ def test_array_size_beyond_index():
 @pytest.mark.parametrize('typename', ['WStrings', 'Empty'])
 def test_ros_wstrings_and_empty(ros, typename):
     from pathlib import Path
-    from rclpy.serialization import deserialize_message, serialize_message
+
+    from rclpy.serialization import deserialize_message
+    from rclpy.serialization import serialize_message
     from rosidl_runtime_py import get_interface_path
     from rosidl_runtime_py.utilities import get_message
     from test_ros_reference import compare
+
     name = 'test_msgs/msg/' + typename
     cls = get_message(name)
     message = cls()

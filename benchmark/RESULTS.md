@@ -12,12 +12,12 @@ messages; imports and bag generation are excluded. Peak RSS uses Linux
 `getrusage(RUSAGE_SELF).ru_maxrss` and includes imports and resident mmap pages.
 Messages are consumed and released individually by both readers.
 
-| Workload | Reader | Seconds | Peak RSS (MiB) |
-| --- | --- | ---: | ---: |
-| Decode all messages | rosbag2_py + rclpy | 9.539 | 121.2 |
-| Decode all messages | rosbag2_dataset | 0.0210 | 1066.4 |
-| Decode + sum every image byte | rosbag2_py + rclpy | 10.402 | 115.6 |
-| Decode + sum every image byte | rosbag2_dataset | 1.448 | 5967.9 |
+| Workload                      | Reader             | Seconds | Peak RSS (MiB) |
+| ----------------------------- | ------------------ | ------: | -------------: |
+| Decode all messages           | rosbag2_py + rclpy |   9.539 |          121.2 |
+| Decode all messages           | rosbag2_dataset    |  0.0210 |         1066.4 |
+| Decode + sum every image byte | rosbag2_py + rclpy |  10.402 |          115.6 |
+| Decode + sum every image byte | rosbag2_dataset    |   1.448 |         5967.9 |
 
 Decode-only leaves pixel buffers lazy in rosbag2_dataset; the ROS reader copies
 and deserializes their bytes. The second workload forces both readers to access
