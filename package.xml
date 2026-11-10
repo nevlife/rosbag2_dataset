@@ -12,7 +12,6 @@
   <test_depend>ament_pep257</test_depend>
   <test_depend>diagnostic_msgs</test_depend>
   <test_depend>geometry_msgs</test_depend>
-  <test_depend>python3-lz4</test_depend>
   <test_depend>python3-pil</test_depend>
   <test_depend>python3-pytest</test_depend>
   <test_depend>python3-yaml</test_depend>
