@@ -96,10 +96,14 @@ class Topic:
 
     def schema(self):
         """Return the (name, encoding, text) schema of this topic."""
-        file_id, channel = map(int, self._entries[0, 1:3])
-        file = self._bag._files[file_id]
-        schema = file.schemas[file.channels[channel].schema_id]
+        file_id = int(self._entries[0, 1])
+        schema = self._bag._files[file_id].schemas[self.channel().schema_id]
         return schema.name, schema.encoding, schema.text
+
+    def channel(self):
+        """Return the MCAP channel of the first message, with its encoding and metadata."""
+        file_id, channel = map(int, self._entries[0, 1:3])
+        return self._bag._files[file_id].channels[channel]
 
     def stamps(self, time_source='log'):
         """Return int64 log times or header (Foxglove: timestamp) stamps by log time."""
@@ -116,13 +120,7 @@ def _stamp_ns(message):
 
 
 class Synced:
-    """
-    Hold random-access tuples of topic indices in reference-time order.
-
-    times holds the clock of each chosen message; where an optional topic has
-    index -1, it holds the nearest clock beyond tolerance, or the reference
-    clock if that topic is empty.
-    """
+    """Hold topic index tuples in reference-time order; times holds each chosen clock."""
 
     def __init__(self, topics, indices, times, windows=None, *, reference=None, window_past=None):
         self.topics = tuple(topics)
@@ -144,6 +142,38 @@ class Synced:
         if isinstance(index, slice):
             return [tuple(map(int, row)) for row in self.indices[index]]
         return tuple(map(int, self.indices[operator.index(index)]))
+
+
+def align(rule, original):
+    """Apply a SampleRule to per-topic clocks in any order; indices refer to those arrays."""
+    orders = {name: np.argsort(clock, kind='stable') for name, clock in original.items()}
+    clocks = {name: original[name][orders[name]] for name in rule.topics}
+    position = np.empty(len(orders[rule.reference]), dtype=np.int64)
+    position[orders[rule.reference]] = np.arange(len(position))
+    rows, times = [], []
+    window_rows = {name: [] for name in rule.windows}
+    for ref_index in range(len(position)):
+        chosen = rule.select(clocks, int(position[ref_index]))
+        if chosen is None:
+            continue
+        indices, row_times, chosen_windows = chosen
+        rows.append(
+            [
+                int(orders[name][index]) if index >= 0 else -1
+                for name, index in zip(rule.topics, indices)
+            ]
+        )
+        times.append(row_times)
+        for name, slots in chosen_windows.items():
+            window_rows[name].append(np.where(slots >= 0, orders[name][slots], -1))
+    return Synced(
+        rule.topics,
+        rows,
+        times,
+        window_rows,
+        reference=rule.reference,
+        window_past={name: w.past for name, w in rule.windows.items()},
+    )
 
 
 class Bag:
@@ -239,45 +269,16 @@ class Bag:
         """
         Align nearest times in reference log-time order.
 
-        tolerance_ns is one value or a mapping from each non-reference topic to its
-        own. A row is omitted when a topic is beyond tolerance, unless the topic is
-        optional; then its index is -1. windows maps topics to Window options; the
-        result's windows hold their indices, -1 beyond the window tolerance.
+        tolerance_ns is one value or a mapping per non-reference topic. A row is omitted
+        when a topic is beyond tolerance unless it is optional (index -1). windows maps
+        topics to Window options; their indices are -1 beyond the window tolerance.
         """
         rule = SampleRule(
             topics, reference, tolerance_ns, optional=optional, windows=windows, hold=hold
         )
         if time_source not in ('log', 'header'):
             raise ValueError("time_source must be 'log' or 'header'")
-        original = {name: self.topic(name).stamps(time_source) for name in rule.topics}
-        orders = {name: np.argsort(clock, kind='stable') for name, clock in original.items()}
-        clocks = {name: original[name][orders[name]] for name in rule.topics}
-        position = np.empty(len(orders[rule.reference]), dtype=np.int64)
-        position[orders[rule.reference]] = np.arange(len(position))
-        rows, times = [], []
-        window_rows = {name: [] for name in rule.windows}
-        for ref_index in range(len(position)):
-            chosen = rule.select(clocks, int(position[ref_index]))
-            if chosen is None:
-                continue
-            indices, row_times, chosen_windows = chosen
-            rows.append(
-                [
-                    int(orders[name][index]) if index >= 0 else -1
-                    for name, index in zip(rule.topics, indices)
-                ]
-            )
-            times.append(row_times)
-            for name, slots in chosen_windows.items():
-                window_rows[name].append(np.where(slots >= 0, orders[name][slots], -1))
-        return Synced(
-            rule.topics,
-            rows,
-            times,
-            window_rows,
-            reference=rule.reference,
-            window_past={name: w.past for name, w in rule.windows.items()},
-        )
+        return align(rule, {name: self.topic(name).stamps(time_source) for name in rule.topics})
 
     def close(self):
         """Close the bag; previously exported arrays remain valid."""

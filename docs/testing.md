@@ -14,8 +14,14 @@ Set `BAG_SCRATCH` to your writable temporary bag directory and `ROS_LOG_DIR` to 
 writable log directory.
 
 - Tests use ROS writers and serializers as references, without DDS.
-- Export tests are skipped without pyarrow and Pillow, and the mp4 and video tests
-  without PyAV.
+- Export tests are skipped without pyarrow and Pillow, the rewrite tests without
+  rosbags and Pillow, and the mp4 and video tests without PyAV.
+- `test_gui.py` builds specs from window choices without Qt, counts topics from
+  `metadata.yaml`, the MCAP summary, and a header walk, then drives the rewrite
+  window with `QT_QPA_PLATFORM=offscreen`: topic table, spec, rewrite, and Cancel.
+- `test_rewrite.py` compares the streaming `nearest` choice with `align()` on
+  jittered stamps with a gap and equidistant ties, for chunked, zstd, unchunked,
+  split, and unfinished inputs, with and without a time range.
 - Video tests encode H.264, H.265, and AV1 with PyAV and write CompressedVideo and
   FFMPEGPacket bags from their message definitions without those packages.
 - `test_lint.py` runs the ament flake8, pep257, and copyright checks.

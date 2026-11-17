@@ -113,7 +113,7 @@ def make_cloud(bigendian=False):
 def write_bag(ros, tmp_path):
     from rclpy.serialization import serialize_message
 
-    def write(events, *, options='', split_size=0):
+    def write(events, *, options='', split_size=0, qos=None):
         """Write (topic, log time, message or (type name, CDR bytes)) events."""
         name = f'bag_{len(list(tmp_path.glob("bag_*")))}'
         path = tmp_path / name
@@ -142,7 +142,13 @@ def write_bag(ros, tmp_path):
                 data = serialize_message(message)
             if topic not in known:
                 writer.create_topic(
-                    ros.TopicMetadata(id=0, name=topic, type=typename, serialization_format='cdr')
+                    ros.TopicMetadata(
+                        id=0,
+                        name=topic,
+                        type=typename,
+                        serialization_format='cdr',
+                        offered_qos_profiles=(qos or {}).get(topic, []),
+                    )
                 )
                 known.add(topic)
             writer.write(topic, data, time)

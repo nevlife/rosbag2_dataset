@@ -32,6 +32,8 @@ _U16 = struct.Struct('<H')
 _U32 = struct.Struct('<I')
 _U64 = struct.Struct('<Q')
 _RECORD = struct.Struct('<BQ')
+_MESSAGE = struct.Struct('<HIQ8x')
+_READ_BUFFER = 1 << 20
 _INDEX_ENTRY = np.dtype([('time', '<u8'), ('offset', '<u8')])
 
 
@@ -55,6 +57,40 @@ def records(buffer, start=0, end=None):
         pos = stop
 
 
+def file_layout(path):
+    """Describe how an MCAP file was written from its footer, summary and first records."""
+    with path.open('rb') as stream:
+        buffer = mmap.mmap(stream.fileno(), 0, access=mmap.ACCESS_READ)
+    try:
+        if buffer[:8] != MAGIC:
+            raise ValueError(f'Not an MCAP file: {path}')
+        return _layout(buffer)
+    except (struct.error, OverflowError) as error:
+        raise ValueError(f'Corrupt MCAP file: {path}') from error
+    finally:
+        buffer.close()
+
+
+def _layout(buffer):
+    summary_start = summary_end = 0
+    footer = len(buffer) - 37
+    if footer >= 8 and buffer[-8:] == MAGIC and buffer[footer] == 2:
+        summary_start, summary_offsets = struct.unpack_from('<QQ', buffer, footer + 9)
+        summary_end = summary_offsets or footer
+    for opcode, _, pos, _ in records(buffer, summary_start, summary_end):
+        if opcode == 8:
+            map_size = _U32.unpack_from(buffer, pos + 32)[0]
+            compression = _string(buffer, pos + 44 + map_size)[0]
+            return f'chunked {compression}' if compression else 'chunked'
+    # Without chunk indexes the first data record tells chunked from unchunked.
+    for opcode, _, pos, _ in records(buffer, 8, summary_start or len(buffer)):
+        if opcode == 5:
+            return 'unchunked (no index, full scan needed)'
+        if opcode == 6:
+            return 'chunked, no index (full scan needed)'
+    return 'no messages'
+
+
 @dataclass(frozen=True)
 class Schema:
     """Describe an embedded serialization schema."""
@@ -66,11 +102,76 @@ class Schema:
 
 @dataclass(frozen=True)
 class Channel:
-    """Associate a topic with a schema and message encoding."""
+    """Associate a topic with a schema, message encoding, and channel metadata."""
 
     schema_id: int
     topic: str
     encoding: str
+    metadata: dict
+
+
+def definition(buffer, opcode, pos, schemas, channels):
+    """Add the Schema (opcode 3) or Channel (opcode 4) record at pos to its mapping."""
+    if opcode == 3:
+        ident = _U16.unpack_from(buffer, pos)[0]
+        name, pos = _string(buffer, pos + 2)
+        encoding, pos = _string(buffer, pos)
+        length = _U32.unpack_from(buffer, pos)[0]
+        start, end = pos + 4, pos + 4 + length
+        text = bytes(buffer[start:end]).decode('utf-8')
+        schemas[ident] = Schema(name, encoding, text)
+    elif opcode == 4:
+        ident, schema_id = struct.unpack_from('<HH', buffer, pos)
+        topic, pos = _string(buffer, pos + 4)
+        encoding, pos = _string(buffer, pos)
+        end = pos + 4 + _U32.unpack_from(buffer, pos)[0]
+        pos += 4
+        metadata = {}
+        while pos < end:
+            key, pos = _string(buffer, pos)
+            metadata[key], pos = _string(buffer, pos)
+        channels[ident] = Channel(schema_id, topic, encoding, metadata)
+
+
+def decompress(compression, data, uncompressed, where):
+    """Return the uncompressed records of an lz4 or zstd chunk; where names it in errors."""
+    if compression == 'lz4':
+        try:
+            import lz4.frame
+        except ModuleNotFoundError as error:
+            raise ModuleNotFoundError(
+                "MCAP lz4 chunks require the missing module 'lz4' (pip install lz4)"
+            ) from error
+        errors = RuntimeError
+
+        def run():
+            if lz4.frame.get_frame_info(data)['content_size'] not in (0, uncompressed):
+                raise RuntimeError('lz4 frame and chunk sizes differ')
+            return lz4.frame.decompress(data)
+    elif compression == 'zstd':
+        try:
+            import zstandard
+        except ModuleNotFoundError as error:
+            raise ModuleNotFoundError(
+                "MCAP zstd chunks require the missing module 'zstandard' "
+                '(pip install zstandard)'
+            ) from error
+        errors = zstandard.ZstdError
+
+        def run():
+            if zstandard.frame_content_size(data) not in (-1, uncompressed):
+                raise zstandard.ZstdError('zstd frame and chunk sizes differ')
+            return zstandard.ZstdDecompressor().decompress(data, max_output_size=uncompressed)
+    else:
+        raise ValueError(f'Unsupported MCAP chunk compression: {compression!r}')
+    # Both decompressors allocate the declared size up front; zstd expands 2^15 times at most.
+    try:
+        decoded = run() if uncompressed <= len(data) << 15 else b''
+    except errors as error:
+        raise ValueError(f'Corrupt MCAP {where}') from error
+    if len(decoded) != uncompressed:
+        raise ValueError(f'Corrupt MCAP {where}')
+    return decoded
 
 
 class McapFile:
@@ -98,19 +199,7 @@ class McapFile:
             raise
 
     def _definition(self, buffer, opcode, pos):
-        if opcode == 3:
-            ident = _U16.unpack_from(buffer, pos)[0]
-            name, pos = _string(buffer, pos + 2)
-            encoding, pos = _string(buffer, pos)
-            length = _U32.unpack_from(buffer, pos)[0]
-            start, end = pos + 4, pos + 4 + length
-            text = bytes(buffer[start:end]).decode('utf-8')
-            self.schemas[ident] = Schema(name, encoding, text)
-        elif opcode == 4:
-            ident, schema_id = struct.unpack_from('<HH', buffer, pos)
-            topic, pos = _string(buffer, pos + 4)
-            encoding, pos = _string(buffer, pos)
-            self.channels[ident] = Channel(schema_id, topic, encoding)
+        definition(buffer, opcode, pos, self.schemas, self.channels)
 
     def _message(self, buffer, record, pos, chunk):
         channel = _U16.unpack_from(buffer, pos)[0]
@@ -180,42 +269,7 @@ class McapFile:
         data = memoryview(self.mapping)[start:end]
         if not compression:
             return data
-        if compression == 'lz4':
-            try:
-                import lz4.frame
-            except ModuleNotFoundError as error:
-                raise ModuleNotFoundError(
-                    "MCAP lz4 chunks require the missing module 'lz4' (pip install lz4)"
-                ) from error
-            errors = RuntimeError
-
-            def decompress():
-                if lz4.frame.get_frame_info(data)['content_size'] not in (0, uncompressed):
-                    raise RuntimeError('lz4 frame and chunk sizes differ')
-                return lz4.frame.decompress(data)
-        elif compression == 'zstd':
-            try:
-                import zstandard
-            except ModuleNotFoundError as error:
-                raise ModuleNotFoundError(
-                    "MCAP zstd chunks require the missing module 'zstandard' "
-                    '(pip install zstandard)'
-                ) from error
-            errors = zstandard.ZstdError
-
-            def decompress():
-                if zstandard.frame_content_size(data) not in (-1, uncompressed):
-                    raise zstandard.ZstdError('zstd frame and chunk sizes differ')
-                return zstandard.ZstdDecompressor().decompress(data, max_output_size=uncompressed)
-        else:
-            raise ValueError(f'Unsupported MCAP chunk compression: {compression!r}')
-        # Both decompressors allocate the declared size up front; zstd expands 2^15 times at most.
-        try:
-            decoded = decompress() if uncompressed <= len(data) << 15 else b''
-        except errors as error:
-            raise ValueError(f'Corrupt MCAP chunk at {offset} in {self.path}') from error
-        if len(decoded) != uncompressed:
-            raise ValueError(f'Corrupt MCAP chunk at {offset} in {self.path}')
+        decoded = decompress(compression, data, uncompressed, f'chunk at {offset} in {self.path}')
         self.cache[offset] = decoded
         if len(self.cache) > self.cache_size:
             self.cache.popitem(last=False)
@@ -241,3 +295,117 @@ class McapFile:
             except BufferError:
                 # Exported NumPy arrays own the mapping until their last view dies.
                 pass
+
+
+def summary(path):
+    """
+    Return (schemas, channels, statistics) from an MCAP file's summary section.
+
+    statistics is (first log time, last log time, {channel: message count}) or None.
+    """
+    with path.open('rb') as stream:
+        size = stream.seek(0, 2)
+        footer = stream.seek(max(size - 37, 0))
+        tail = stream.read(37)
+        if size < 8 + 37 or tail[-8:] != MAGIC or tail[0] != 2:
+            return {}, {}, None
+        start, offsets = struct.unpack_from('<QQ', tail, 9)
+        stream.seek(start)
+        buffer = stream.read((offsets or footer) - start) if start else b''
+    schemas, channels, statistics = {}, {}, None
+    try:
+        for opcode, _, pos, _ in records(buffer):
+            if opcode in (3, 4):
+                definition(buffer, opcode, pos, schemas, channels)
+            elif opcode == 11:
+                first, last = struct.unpack_from('<QQ', buffer, pos + 26)
+                end = pos + 46 + _U32.unpack_from(buffer, pos + 42)[0]
+                counts = dict(struct.iter_unpack('<HQ', buffer[pos + 46:end]))
+                statistics = first, last, counts
+    except (struct.error, OverflowError) as error:
+        raise ValueError(f'Corrupt MCAP summary: {path}') from error
+    return schemas, channels, statistics
+
+
+class RecordStream:
+    """
+    Read an MCAP file once in file order through top-level record headers.
+
+    schemas and channels fill as their records pass; position is the file offset of
+    the current top-level record.
+    """
+
+    def __init__(self, path):
+        self.path = path
+        self.schemas = {}
+        self.channels = {}
+        self.position = 0
+
+    def messages(self, want, end_ns=None):
+        """
+        Yield (channel, log time, size, payload) of every message in file order.
+
+        payload is the CDR bytes when want(channel, log time) is true and None
+        otherwise; then the body of a message outside chunks is skipped by its record
+        length without reading it. The walk stops at a chunk that starts at or after
+        end_ns, which assumes that log times increase in file order.
+        """
+        with self.path.open('rb', buffering=_READ_BUFFER) as stream:
+            if stream.read(8) != MAGIC:
+                raise ValueError(f'Not an MCAP file: {self.path}')
+            self.position = 8
+            try:
+                while True:
+                    head = stream.read(9)
+                    if len(head) < 9:
+                        return
+                    opcode, size = _RECORD.unpack(head)
+                    if opcode == 5:
+                        header = stream.read(22)
+                        if len(header) < 22 or size < 22:
+                            return
+                        channel, _, time = _MESSAGE.unpack(header)
+                        if want(channel, time):
+                            payload = stream.read(size - 22)
+                            if len(payload) < size - 22:
+                                return
+                            yield channel, time, size - 22, payload
+                        else:
+                            yield channel, time, size - 22, None
+                            stream.seek(size - 22, 1)
+                    elif opcode == 6:
+                        body = stream.read(size)
+                        if len(body) < size:
+                            return
+                        if end_ns is not None and _U64.unpack_from(body)[0] >= end_ns:
+                            return
+                        yield from self._chunk(body, want)
+                    elif opcode in (3, 4):
+                        body = stream.read(size)
+                        if len(body) < size:
+                            return
+                        definition(body, opcode, 0, self.schemas, self.channels)
+                    elif opcode in (2, 15):
+                        return
+                    else:
+                        stream.seek(size, 1)
+                    self.position += 9 + size
+            except (struct.error, OverflowError, UnicodeDecodeError) as error:
+                where = f'{self.position} in {self.path}'
+                raise ValueError(f'Corrupt MCAP record at {where}') from error
+
+    def _chunk(self, body, want):
+        uncompressed = _U64.unpack_from(body, 16)[0]
+        compression, pos = _string(body, 28)
+        size = _U64.unpack_from(body, pos)[0]
+        buffer = memoryview(body)[pos + 8:pos + 8 + size]
+        if compression:
+            where = f'chunk at {self.position} in {self.path}'
+            buffer = memoryview(decompress(compression, buffer, uncompressed, where))
+        for opcode, _, pos, stop in records(buffer):
+            if opcode in (3, 4):
+                definition(buffer, opcode, pos, self.schemas, self.channels)
+            elif opcode == 5:
+                channel, _, time = _MESSAGE.unpack_from(buffer, pos)
+                payload = bytes(buffer[pos + 22:stop]) if want(channel, time) else None
+                yield channel, time, stop - pos - 22, payload
