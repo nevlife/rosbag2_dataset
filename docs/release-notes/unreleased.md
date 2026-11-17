@@ -20,6 +20,10 @@ add the same entries to `CHANGELOG.rst`.
 - `hold` topics of `SampleRule` give their last message before the reference; `LiveSampler.early` counts samples released by the wait
 - `SceneDataset` reads exported scenes, including `ref` sensors from moved bags (`bag_root`)
 - Scenes are named by bag and first frame time; `--clean` removes scenes a run did not write
+- `rosbag2_dataset.rewrite` writes a smaller rosbag2 MCAP bag from a spec: kept or dropped topics copied as CDR, topics thinned to the nearest message per reference message, `Image` topics as JPEG `CompressedImage`; needs `.[rewrite]` (rosbags)
+- Rewrite reads the input once in file order without an index, also for unchunked MCAP files (rosbag2 `fastwrite`): bodies of dropped topics are skipped, thinning decides from a bounded buffer of held messages, and the time range stops the read at its end
+- Rewrite window (`rosbag2_dataset` command or `python -m rosbag2_dataset.gui`, `.[gui]`): topic table with counts and rates from `metadata.yaml` or the MCAP summary, sizes estimated from the first 1 GB of the first file, rewrite progress in input bytes with Cancel, and the spec it runs; `jpeg.topics` can map topics to their own quality
+- The rewrite window shows the MCAP layout of the opened bag (chunked, compression, or unchunked without an index) and the storage preset that the recording session names; Keep all and Keep none buttons
 
 ### Bugfixes
 
@@ -33,6 +37,9 @@ add the same entries to `CHANGELOG.rst`.
 - Split the README into an entry page and `docs/`; added release notes, `CHANGELOG.rst`, and a rosdoc2 configuration
 
 ### New API features
+
+- `Topic.channel()` returns the MCAP channel with its encoding and metadata (rosbag2 `offered_qos_profiles`)
+- `rewrite(spec, bag, out, *, start_ns, end_ns, progress)` takes a bag directory or MCAP file and a `progress('write', bytes, total)` callback
 
 ### API Breaking Changes
 
